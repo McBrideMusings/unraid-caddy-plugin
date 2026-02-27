@@ -23,7 +23,7 @@ if (file_exists($pidFile)) {
 $version = trim(shell_exec("/usr/local/bin/caddy version 2>/dev/null") ?: "unknown");
 $caddyfileContent = file_exists($caddyfile) ? file_get_contents($caddyfile) : "";
 
-$csrf = htmlspecialchars($var["csrf_token"] ?? "");
+$csrf = _var($var,'csrf_token');
 ?>
 
 <style>
@@ -97,7 +97,7 @@ $csrf = htmlspecialchars($var["csrf_token"] ?? "");
 </div>
 
 <script>
-var csrfToken = "<?=$csrf?>";
+var csrfToken = csrf_token;
 var statusUrl = "/plugins/caddy-server/php/status.php";
 
 function fetchStatus() {
