@@ -1,0 +1,101 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Set package variables
+        id: pkg
+        run: |
+          CADDY_VER="2.9.1"
+          PLUGIN_VER="${{ steps.version.outputs.version }}"
+          echo "caddy_ver=${CADDY_VER}" >> "$GITHUB_OUTPUT"
+          echo "caddy_pkg=caddy-${CADDY_VER}-x86_64-1.txz" >> "$GITHUB_OUTPUT"
+          echo "plugin_pkg=caddy-server-${PLUGIN_VER}-x86_64-1.txz" >> "$GITHUB_OUTPUT"
+
+      - name: Download Caddy binary
+        run: |
+          mkdir -p build/caddy-staging/usr/local/bin
+          curl -L -o build/caddy.tar.gz \
+            "https://github.com/caddyserver/caddy/releases/download/v${{ steps.pkg.outputs.caddy_ver }}/caddy_${{ steps.pkg.outputs.caddy_ver }}_linux_amd64.tar.gz"
+          tar -xzf build/caddy.tar.gz -C build caddy
+          mv build/caddy build/caddy-staging/usr/local/bin/caddy
+          chmod 755 build/caddy-staging/usr/local/bin/caddy
+
+      - name: Prepare plugin staging
+        run: |
+          mkdir -p build/plugin-staging
+          cp -a source/* build/plugin-staging/
+
+      - name: Build packages
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}/build:/build" \
+            -v "${{ github.workspace }}/source:/source" \
+            vbatts/slackware:current \
+            bash -c "
+              cd /build/caddy-staging && makepkg -l y -c n /build/${{ steps.pkg.outputs.caddy_pkg }}
+              cd /build/plugin-staging && makepkg -l y -c n /build/${{ steps.pkg.outputs.plugin_pkg }}
+            "
+
+      - name: Compute checksums
+        id: md5
+        run: |
+          CADDY_MD5=$(md5sum "build/${{ steps.pkg.outputs.caddy_pkg }}" | cut -d' ' -f1)
+          PLUGIN_MD5=$(md5sum "build/${{ steps.pkg.outputs.plugin_pkg }}" | cut -d' ' -f1)
+          echo "caddy_md5=${CADDY_MD5}" >> "$GITHUB_OUTPUT"
+          echo "plugin_md5=${PLUGIN_MD5}" >> "$GITHUB_OUTPUT"
+          echo "Caddy MD5:  ${CADDY_MD5}"
+          echo "Plugin MD5: ${PLUGIN_MD5}"
+
+      - name: Patch .plg with checksums and version
+        run: |
+          sed -i 's/<!ENTITY version     "[^"]*">/<!ENTITY version     "${{ steps.version.outputs.version }}">/' caddy-server.plg
+          sed -i 's/<!ENTITY caddy_md5   "[^"]*">/<!ENTITY caddy_md5   "${{ steps.md5.outputs.caddy_md5 }}">/' caddy-server.plg
+          sed -i 's/<!ENTITY plugin_md5  "[^"]*">/<!ENTITY plugin_md5  "${{ steps.md5.outputs.plugin_md5 }}">/' caddy-server.plg
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: v${{ steps.version.outputs.version }}
+          body: |
+            ## Caddy Server for Unraid — v${{ steps.version.outputs.version }}
+
+            ### Packages
+            - `${{ steps.pkg.outputs.caddy_pkg }}` (Caddy ${{ steps.pkg.outputs.caddy_ver }})
+            - `${{ steps.pkg.outputs.plugin_pkg }}`
+
+            ### Install
+            Add this URL in Unraid under **Tools → Install Plugin Tab**:
+            ```
+            https://raw.githubusercontent.com/McBrideMusings/unraid-caddy-plugin/main/caddy-server.plg
+            ```
+          files: |
+            build/${{ steps.pkg.outputs.caddy_pkg }}
+            build/${{ steps.pkg.outputs.plugin_pkg }}
+
+      - name: Update .plg on main branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git checkout main
+          git add caddy-server.plg
+          git commit -m "Update checksums for v${{ steps.version.outputs.version }}"
+          git push origin main

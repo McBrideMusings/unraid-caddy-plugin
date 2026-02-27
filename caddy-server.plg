@@ -1,0 +1,106 @@
+<?xml version='1.0' standalone='yes'?>
+
+<!DOCTYPE PLUGIN [
+  <!ENTITY name        "caddy-server">
+  <!ENTITY author      "McBrideMusings">
+  <!ENTITY version     "2026.02.26">
+  <!ENTITY caddy_ver   "2.9.1">
+  <!ENTITY launch      "Settings/CaddyServer">
+  <!ENTITY gitURL      "https://raw.githubusercontent.com/McBrideMusings/unraid-caddy-plugin/main">
+  <!ENTITY releaseURL  "https://github.com/McBrideMusings/unraid-caddy-plugin/releases/download/&version;">
+  <!ENTITY pluginURL   "&gitURL;/caddy-server.plg">
+  <!ENTITY caddy_pkg   "caddy-&caddy_ver;-x86_64-1.txz">
+  <!ENTITY plugin_pkg  "&name;-&version;-x86_64-1.txz">
+  <!ENTITY caddy_md5   "CADDY_MD5_PLACEHOLDER">
+  <!ENTITY plugin_md5  "PLUGIN_MD5_PLACEHOLDER">
+]>
+
+<PLUGIN  name="&name;"
+         author="&author;"
+         version="&version;"
+         launch="&launch;"
+         pluginURL="&pluginURL;"
+         min="6.12.0">
+
+<CHANGES>
+##&name;
+
+###&version;
+- Initial release
+</CHANGES>
+
+<!--
+caddy binary package
+-->
+<FILE Name="/boot/config/plugins/&name;/&caddy_pkg;" Run="upgradepkg --install-new">
+<URL>&releaseURL;/&caddy_pkg;</URL>
+<MD5>&caddy_md5;</MD5>
+</FILE>
+
+<!--
+plugin package
+-->
+<FILE Name="/boot/config/plugins/&name;/&plugin_pkg;" Run="upgradepkg --install-new">
+<URL>&releaseURL;/&plugin_pkg;</URL>
+<MD5>&plugin_md5;</MD5>
+</FILE>
+
+<!--
+post-install: create persistent config directory and defaults
+-->
+<FILE Run="/bin/bash">
+<INLINE>
+PLUGIN_NAME="caddy-server"
+CONFIG_DIR="/boot/config/plugins/${PLUGIN_NAME}"
+
+mkdir -p "${CONFIG_DIR}"
+
+# Default config
+if [ ! -f "${CONFIG_DIR}/${PLUGIN_NAME}.cfg" ]; then
+  cp /usr/local/emhttp/plugins/${PLUGIN_NAME}/default.cfg "${CONFIG_DIR}/${PLUGIN_NAME}.cfg"
+fi
+
+# Default Caddyfile
+if [ ! -f "${CONFIG_DIR}/Caddyfile" ]; then
+  cat > "${CONFIG_DIR}/Caddyfile" &lt;&lt;'CADDYEOF'
+# Caddy configuration file
+# See https://caddyserver.com/docs/caddyfile for syntax
+#
+# Example reverse proxy:
+#
+# my.domain.com {
+#     reverse_proxy localhost:8080
+# }
+CADDYEOF
+fi
+
+echo "Caddy Server plugin installed."
+</INLINE>
+</FILE>
+
+<!--
+removal script: stop service, remove packages, preserve user config
+-->
+<FILE Run="/bin/bash" Method="remove">
+<INLINE>
+# Stop Caddy if running
+/etc/rc.d/rc.caddy stop 2>/dev/null
+
+# Remove installed packages
+removepkg caddy-&caddy_ver;-x86_64-1 2>/dev/null
+removepkg &name;-&version;-x86_64-1 2>/dev/null
+
+# Remove cached packages
+rm -f /boot/config/plugins/&name;/&caddy_pkg;
+rm -f /boot/config/plugins/&name;/&plugin_pkg;
+
+# Remove volatile files
+rm -f /var/run/caddy.pid
+rm -f /var/log/caddy.log
+
+# Preserve /boot/config/plugins/caddy-server/ (Caddyfile and user config)
+echo "Caddy Server plugin removed. User configuration preserved at /boot/config/plugins/&name;/"
+</INLINE>
+</FILE>
+
+</PLUGIN>

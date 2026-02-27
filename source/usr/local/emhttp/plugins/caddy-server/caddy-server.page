@@ -1,0 +1,158 @@
+Menu="NetworkServices"
+Title="Caddy Server"
+Icon="fa-globe"
+---
+<?php
+$plugin = "caddy-server";
+$configDir = "/boot/config/plugins/{$plugin}";
+$configFile = "{$configDir}/{$plugin}.cfg";
+$caddyfile = "{$configDir}/Caddyfile";
+
+$cfg = parse_ini_file($configFile) ?: [];
+$service = $cfg["SERVICE"] ?? "disable";
+
+$running = false;
+$pidFile = "/var/run/caddy.pid";
+if (file_exists($pidFile)) {
+    $pid = trim(file_get_contents($pidFile));
+    if ($pid && file_exists("/proc/{$pid}")) {
+        $running = true;
+    }
+}
+
+$version = trim(shell_exec("/usr/local/bin/caddy version 2>/dev/null") ?: "unknown");
+$caddyfileContent = file_exists($caddyfile) ? file_get_contents($caddyfile) : "";
+
+$csrf = htmlspecialchars($var["csrf_token"] ?? "");
+?>
+
+<style>
+#caddy-status { font-weight: bold; }
+#caddy-status.running { color: green; }
+#caddy-status.stopped { color: red; }
+#caddy-log { font-family: monospace; font-size: 12px; white-space: pre-wrap; word-wrap: break-word;
+             background: #1a1a2e; color: #e0e0e0; padding: 10px; max-height: 400px; overflow-y: auto; }
+#caddy-editor { font-family: monospace; font-size: 13px; width: 100%; tab-size: 4; }
+.caddy-btn { margin-right: 8px; }
+</style>
+
+<div>
+  <span>Status: </span>
+  <span id="caddy-status" class="<?= $running ? 'running' : 'stopped' ?>">
+    <?= $running ? 'Running' : 'Stopped' ?>
+  </span>
+  <span id="caddy-version" style="margin-left: 15px; color: #888;">
+    Caddy <?= htmlspecialchars($version) ?>
+  </span>
+</div>
+<hr>
+
+<form markdown="1" method="POST" action="/update.htm" target="progressFrame">
+  <input type="hidden" name="csrf_token" value="<?=$csrf?>">
+  <dl>
+    <dt>Enable Caddy Server:</dt>
+    <dd>
+      <select name="#command" onchange="this.form.submit()">
+        <option value="/etc/rc.d/rc.caddy enable" <?= $service === "enable" ? 'selected' : '' ?>>Yes</option>
+        <option value="/etc/rc.d/rc.caddy disable" <?= $service !== "enable" ? 'selected' : '' ?>>No</option>
+      </select>
+    </dd>
+  </dl>
+</form>
+
+<?php if ($service === "enable"): ?>
+<div style="margin-bottom: 20px;">
+  <form method="POST" action="/update.htm" target="progressFrame" style="display:inline">
+    <input type="hidden" name="csrf_token" value="<?=$csrf?>">
+    <input type="hidden" name="#command" value="/etc/rc.d/rc.caddy start">
+    <button type="submit" class="caddy-btn" <?= $running ? 'disabled' : '' ?>>Start</button>
+  </form>
+  <form method="POST" action="/update.htm" target="progressFrame" style="display:inline">
+    <input type="hidden" name="csrf_token" value="<?=$csrf?>">
+    <input type="hidden" name="#command" value="/etc/rc.d/rc.caddy stop">
+    <button type="submit" class="caddy-btn" <?= !$running ? 'disabled' : '' ?>>Stop</button>
+  </form>
+  <form method="POST" action="/update.htm" target="progressFrame" style="display:inline">
+    <input type="hidden" name="csrf_token" value="<?=$csrf?>">
+    <input type="hidden" name="#command" value="/etc/rc.d/rc.caddy restart">
+    <button type="submit" class="caddy-btn" <?= !$running ? 'disabled' : '' ?>>Restart</button>
+  </form>
+</div>
+<?php endif; ?>
+
+<div style="margin-bottom: 20px;">
+  <strong>Caddyfile</strong>
+  <br><br>
+  <textarea id="caddy-editor" rows="30"><?= htmlspecialchars($caddyfileContent) ?></textarea>
+  <br><br>
+  <button class="caddy-btn" onclick="saveCaddyfile(false)">Save</button>
+  <button class="caddy-btn" onclick="saveCaddyfile(true)">Save &amp; Reload</button>
+  <span id="caddy-save-status"></span>
+</div>
+
+<div>
+  <strong>Log</strong>
+  <br><br>
+  <pre id="caddy-log">Loading...</pre>
+</div>
+
+<script>
+var csrfToken = "<?=$csrf?>";
+var statusUrl = "/plugins/caddy-server/php/status.php";
+
+function fetchStatus() {
+  var xhr = new XMLHttpRequest();
+  xhr.open("GET", statusUrl + "?action=status", true);
+  xhr.onreadystatechange = function() {
+    if (xhr.readyState === 4 && xhr.status === 200) {
+      try {
+        var data = JSON.parse(xhr.responseText);
+        var el = document.getElementById("caddy-status");
+        if (data.running) {
+          el.textContent = "Running";
+          el.className = "running";
+        } else {
+          el.textContent = "Stopped";
+          el.className = "stopped";
+        }
+        document.getElementById("caddy-version").textContent = "Caddy " + data.version;
+        document.getElementById("caddy-log").textContent = data.log || "(empty)";
+
+        var logEl = document.getElementById("caddy-log");
+        logEl.scrollTop = logEl.scrollHeight;
+      } catch(e) {}
+    }
+  };
+  xhr.send();
+}
+
+function saveCaddyfile(reload) {
+  var action = reload ? "save_and_reload" : "save_caddyfile";
+  var content = document.getElementById("caddy-editor").value;
+  var statusEl = document.getElementById("caddy-save-status");
+  statusEl.textContent = "Saving...";
+
+  var xhr = new XMLHttpRequest();
+  xhr.open("POST", statusUrl + "?action=" + action, true);
+  xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+  xhr.onreadystatechange = function() {
+    if (xhr.readyState === 4) {
+      try {
+        var data = JSON.parse(xhr.responseText);
+        if (data.success) {
+          statusEl.textContent = reload ? "Saved and reloaded." : "Saved.";
+        } else {
+          statusEl.textContent = "Error: " + (data.error || data.output || "Unknown error");
+        }
+      } catch(e) {
+        statusEl.textContent = "Error saving.";
+      }
+      setTimeout(function() { statusEl.textContent = ""; }, 5000);
+    }
+  };
+  xhr.send("csrf_token=" + encodeURIComponent(csrfToken) + "&content=" + encodeURIComponent(content));
+}
+
+fetchStatus();
+setInterval(fetchStatus, 5000);
+</script>

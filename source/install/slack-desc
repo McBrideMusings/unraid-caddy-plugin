@@ -1,0 +1,11 @@
+caddy-server: Caddy Server for Unraid
+caddy-server:
+caddy-server: Caddy is a powerful, enterprise-ready web server with automatic
+caddy-server: HTTPS. This plugin installs Caddy as a native Unraid service,
+caddy-server: providing a reverse proxy that runs at the OS level and stays
+caddy-server: available regardless of array state.
+caddy-server:
+caddy-server:
+caddy-server:
+caddy-server: https://caddyserver.com
+caddy-server:

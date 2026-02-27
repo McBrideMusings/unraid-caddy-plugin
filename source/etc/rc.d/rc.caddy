@@ -1,0 +1,147 @@
+#!/bin/bash
+#
+# rc.caddy - Caddy web server service control script for Unraid
+#
+
+PLUGIN_NAME="caddy-server"
+CONFIG_DIR="/boot/config/plugins/${PLUGIN_NAME}"
+CONFIG_FILE="${CONFIG_DIR}/${PLUGIN_NAME}.cfg"
+CADDY_BIN="/usr/local/bin/caddy"
+PIDFILE="/var/run/caddy.pid"
+LOGFILE="/var/log/caddy.log"
+
+# Source config
+if [ -f "$CONFIG_FILE" ]; then
+  source "$CONFIG_FILE"
+fi
+
+CADDYFILE="${CONFIG_DIR}/Caddyfile"
+
+caddy_running() {
+  if [ -f "$PIDFILE" ]; then
+    local pid
+    pid=$(cat "$PIDFILE" 2>/dev/null)
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      return 0
+    fi
+    # Stale PID file
+    rm -f "$PIDFILE"
+  fi
+  return 1
+}
+
+start() {
+  if [ "$SERVICE" != "enable" ]; then
+    echo "Service is not enabled."
+    return 1
+  fi
+
+  if caddy_running; then
+    echo "Caddy is already running."
+    return 0
+  fi
+
+  if [ ! -f "$CADDYFILE" ]; then
+    echo "Caddyfile not found at ${CADDYFILE}"
+    return 1
+  fi
+
+  echo "Starting Caddy..."
+  "$CADDY_BIN" run --config "$CADDYFILE" --pidfile "$PIDFILE" >> "$LOGFILE" 2>&1 &
+  sleep 1
+
+  if caddy_running; then
+    echo "Caddy started successfully."
+  else
+    echo "Failed to start Caddy. Check ${LOGFILE} for details."
+    return 1
+  fi
+}
+
+stop() {
+  if ! caddy_running; then
+    echo "Caddy is not running."
+    return 0
+  fi
+
+  echo "Stopping Caddy..."
+  "$CADDY_BIN" stop > /dev/null 2>&1
+
+  # Wait briefly, then force kill if needed
+  local i=0
+  while caddy_running && [ $i -lt 5 ]; do
+    sleep 1
+    i=$((i + 1))
+  done
+
+  if caddy_running; then
+    local pid
+    pid=$(cat "$PIDFILE" 2>/dev/null)
+    if [ -n "$pid" ]; then
+      kill -9 "$pid" 2>/dev/null
+    fi
+    rm -f "$PIDFILE"
+    echo "Caddy forcefully stopped."
+  else
+    echo "Caddy stopped."
+  fi
+}
+
+restart() {
+  stop
+  sleep 1
+  start
+}
+
+reload() {
+  if ! caddy_running; then
+    echo "Caddy is not running."
+    return 1
+  fi
+
+  echo "Reloading Caddy configuration..."
+  if "$CADDY_BIN" reload --config "$CADDYFILE" 2>&1; then
+    echo "Caddy configuration reloaded."
+  else
+    echo "Failed to reload Caddy configuration."
+    return 1
+  fi
+}
+
+status() {
+  if caddy_running; then
+    local pid
+    pid=$(cat "$PIDFILE" 2>/dev/null)
+    echo "Caddy is running (PID: ${pid})."
+  else
+    echo "Caddy is not running."
+  fi
+}
+
+enable() {
+  sed -i 's/^SERVICE=.*/SERVICE="enable"/' "$CONFIG_FILE"
+  SERVICE="enable"
+  echo "Service enabled."
+  start
+}
+
+disable() {
+  stop
+  sed -i 's/^SERVICE=.*/SERVICE="disable"/' "$CONFIG_FILE"
+  SERVICE="disable"
+  echo "Service disabled."
+}
+
+case "$1" in
+  start)   start   ;;
+  stop)    stop    ;;
+  restart) restart ;;
+  reload)  reload  ;;
+  status)  status  ;;
+  enable)  enable  ;;
+  disable) disable ;;
+  *)
+    echo "Usage: $0 {start|stop|restart|reload|status|enable|disable}"
+    exit 1
+    ;;
+esac
