@@ -43,13 +43,19 @@ jobs:
           mkdir -p build/plugin-staging
           cp -a source/* build/plugin-staging/
 
+      - name: Fix staging directory ownership
+        run: |
+          sudo chown -R root:root build/caddy-staging build/plugin-staging
+          sudo chmod 755 build/caddy-staging build/plugin-staging
+
       - name: Build packages
         run: |
           docker run --rm \
             -v "${{ github.workspace }}/build:/build" \
-            -v "${{ github.workspace }}/source:/source" \
             vbatts/slackware:current \
             bash -c "
+              chown root:root /build/caddy-staging /build/plugin-staging
+              chmod 755 /build/caddy-staging /build/plugin-staging
               cd /build/caddy-staging && makepkg -l y -c n /build/${{ steps.pkg.outputs.caddy_pkg }}
               cd /build/plugin-staging && makepkg -l y -c n /build/${{ steps.pkg.outputs.plugin_pkg }}
             "

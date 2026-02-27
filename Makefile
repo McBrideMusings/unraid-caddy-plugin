@@ -29,6 +29,8 @@ download-caddy:
 package-caddy: download-caddy
 	@echo "Packaging Caddy binary..."
 	mkdir -p $(PACKAGES_DIR)
+	chown root:root $(CADDY_STAGE)
+	chmod 755 $(CADDY_STAGE)
 	cd $(CADDY_STAGE) && makepkg -l y -c n ../$(CADDY_PKG)
 	mv $(BUILD_DIR)/$(CADDY_PKG) $(PACKAGES_DIR)/
 
@@ -36,6 +38,8 @@ package-plugin:
 	@echo "Packaging plugin..."
 	mkdir -p $(PLUGIN_STAGE) $(PACKAGES_DIR)
 	cp -a source/* $(PLUGIN_STAGE)/
+	chown root:root $(PLUGIN_STAGE)
+	chmod 755 $(PLUGIN_STAGE)
 	cd $(PLUGIN_STAGE) && makepkg -l y -c n ../$(PLUGIN_PKG)
 	mv $(BUILD_DIR)/$(PLUGIN_PKG) $(PACKAGES_DIR)/
 
