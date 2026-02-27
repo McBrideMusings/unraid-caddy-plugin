@@ -7,7 +7,7 @@
   <!ENTITY caddy_ver   "2.9.1">
   <!ENTITY launch      "Settings/CaddyServer">
   <!ENTITY gitURL      "https://raw.githubusercontent.com/McBrideMusings/unraid-caddy-plugin/main">
-  <!ENTITY releaseURL  "https://github.com/McBrideMusings/unraid-caddy-plugin/releases/download/&version;">
+  <!ENTITY releaseURL  "https://github.com/McBrideMusings/unraid-caddy-plugin/releases/download/v&version;">
   <!ENTITY pluginURL   "&gitURL;/caddy-server.plg">
   <!ENTITY caddy_pkg   "caddy-&caddy_ver;-x86_64-1.txz">
   <!ENTITY plugin_pkg  "&name;-&version;-x86_64-1.txz">
