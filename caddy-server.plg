@@ -11,8 +11,8 @@
   <!ENTITY pluginURL   "&gitURL;/caddy-server.plg">
   <!ENTITY caddy_pkg   "caddy-&caddy_ver;-x86_64-1.txz">
   <!ENTITY plugin_pkg  "&name;-&version;-x86_64-1.txz">
-  <!ENTITY caddy_md5   "9e3f4cbfc4329b0183f2f19e6f6ee309">
-  <!ENTITY plugin_md5  "fab1b6282ef787c45a5f2e59c319878b">
+  <!ENTITY caddy_md5   "07cbd95d30cd5b3bd2f02da8334c3542">
+  <!ENTITY plugin_md5  "e71f59707c3f7bfa787c5513e24c473a">
 ]>
 
 <PLUGIN  name="&name;"
