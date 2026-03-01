@@ -1,0 +1,170 @@
+#!/bin/bash
+#
+# rc.coredns - CoreDNS service control script for Unraid
+#
+
+PLUGIN_NAME="caddy-server"
+CONFIG_DIR="/boot/config/plugins/${PLUGIN_NAME}"
+CONFIG_FILE="${CONFIG_DIR}/${PLUGIN_NAME}.cfg"
+COREDNS_BIN="/usr/local/bin/coredns"
+PIDFILE="/var/run/coredns.pid"
+LOGFILE="/var/log/coredns.log"
+RUNDIR="/var/run/coredns"
+
+# Source config
+if [ -f "$CONFIG_FILE" ]; then
+  source "$CONFIG_FILE"
+fi
+
+coredns_running() {
+  if [ -f "$PIDFILE" ]; then
+    local pid
+    pid=$(cat "$PIDFILE" 2>/dev/null)
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      return 0
+    fi
+    rm -f "$PIDFILE"
+  fi
+  return 1
+}
+
+generate_config() {
+  local zone="${DNS_ZONE:-piercetower.local}"
+  local ip="${DNS_IP}"
+
+  # Auto-detect Tailscale IP if not set
+  if [ -z "$ip" ]; then
+    ip=$(tailscale ip -4 2>/dev/null)
+    if [ -z "$ip" ]; then
+      echo "ERROR: DNS_IP not set and could not auto-detect Tailscale IP."
+      return 1
+    fi
+    echo "Auto-detected Tailscale IP: ${ip}"
+  fi
+
+  mkdir -p "$RUNDIR"
+
+  local serial
+  serial=$(date +%s)
+
+  # Generate zone file
+  cat > "${RUNDIR}/db.zone" <<ZONEEOF
+\$TTL 300
+@  IN SOA ns.${zone}. admin.${zone}. ${serial} 3600 900 604800 300
+@  IN NS  ns.${zone}.
+@  IN A   ${ip}
+*  IN A   ${ip}
+ns IN A   ${ip}
+ZONEEOF
+
+  # Generate Corefile
+  cat > "${RUNDIR}/Corefile" <<COREEOF
+${zone}:53 {
+    file ${RUNDIR}/db.zone
+    log
+}
+COREEOF
+
+  echo "Generated CoreDNS config for ${zone} -> ${ip}"
+}
+
+start() {
+  if [ "$COREDNS_SERVICE" != "enable" ]; then
+    echo "CoreDNS service is not enabled."
+    return 1
+  fi
+
+  if coredns_running; then
+    echo "CoreDNS is already running."
+    return 0
+  fi
+
+  if ! generate_config; then
+    return 1
+  fi
+
+  echo "Starting CoreDNS..."
+  "$COREDNS_BIN" -conf "${RUNDIR}/Corefile" -pidfile "$PIDFILE" >> "$LOGFILE" 2>&1 &
+  sleep 1
+
+  if coredns_running; then
+    echo "CoreDNS started successfully."
+  else
+    echo "Failed to start CoreDNS. Check ${LOGFILE} for details."
+    return 1
+  fi
+}
+
+stop() {
+  if ! coredns_running; then
+    echo "CoreDNS is not running."
+    return 0
+  fi
+
+  echo "Stopping CoreDNS..."
+  local pid
+  pid=$(cat "$PIDFILE" 2>/dev/null)
+  if [ -n "$pid" ]; then
+    kill "$pid" 2>/dev/null
+  fi
+
+  local i=0
+  while coredns_running && [ $i -lt 5 ]; do
+    sleep 1
+    i=$((i + 1))
+  done
+
+  if coredns_running; then
+    pid=$(cat "$PIDFILE" 2>/dev/null)
+    if [ -n "$pid" ]; then
+      kill -9 "$pid" 2>/dev/null
+    fi
+    rm -f "$PIDFILE"
+    echo "CoreDNS forcefully stopped."
+  else
+    echo "CoreDNS stopped."
+  fi
+}
+
+restart() {
+  stop
+  sleep 1
+  start
+}
+
+status() {
+  if coredns_running; then
+    local pid
+    pid=$(cat "$PIDFILE" 2>/dev/null)
+    echo "CoreDNS is running (PID: ${pid})."
+  else
+    echo "CoreDNS is not running."
+  fi
+}
+
+enable() {
+  sed -i 's/^COREDNS_SERVICE=.*/COREDNS_SERVICE="enable"/' "$CONFIG_FILE"
+  COREDNS_SERVICE="enable"
+  echo "CoreDNS service enabled."
+  start
+}
+
+disable() {
+  stop
+  sed -i 's/^COREDNS_SERVICE=.*/COREDNS_SERVICE="disable"/' "$CONFIG_FILE"
+  COREDNS_SERVICE="disable"
+  echo "CoreDNS service disabled."
+}
+
+case "$1" in
+  start)   start   ;;
+  stop)    stop    ;;
+  restart) restart ;;
+  status)  status  ;;
+  enable)  enable  ;;
+  disable) disable ;;
+  *)
+    echo "Usage: $0 {start|stop|restart|status|enable|disable}"
+    exit 1
+    ;;
+esac

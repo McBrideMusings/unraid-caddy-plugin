@@ -24,9 +24,12 @@ jobs:
         id: pkg
         run: |
           CADDY_VER="2.9.1"
+          COREDNS_VER="1.12.1"
           PLUGIN_VER="${{ steps.version.outputs.version }}"
           echo "caddy_ver=${CADDY_VER}" >> "$GITHUB_OUTPUT"
+          echo "coredns_ver=${COREDNS_VER}" >> "$GITHUB_OUTPUT"
           echo "caddy_pkg=caddy-${CADDY_VER}-x86_64-1.txz" >> "$GITHUB_OUTPUT"
+          echo "coredns_pkg=coredns-${COREDNS_VER}-x86_64-1.txz" >> "$GITHUB_OUTPUT"
           echo "plugin_pkg=caddy-server-${PLUGIN_VER}-x86_64-1.txz" >> "$GITHUB_OUTPUT"
 
       - name: Download Caddy binary
@@ -38,6 +41,15 @@ jobs:
           mv build/caddy build/caddy-staging/usr/local/bin/caddy
           chmod 755 build/caddy-staging/usr/local/bin/caddy
 
+      - name: Download CoreDNS binary
+        run: |
+          mkdir -p build/coredns-staging/usr/local/bin
+          curl -L -o build/coredns.tgz \
+            "https://github.com/coredns/coredns/releases/download/v${{ steps.pkg.outputs.coredns_ver }}/coredns_${{ steps.pkg.outputs.coredns_ver }}_linux_amd64.tgz"
+          tar -xzf build/coredns.tgz -C build coredns
+          mv build/coredns build/coredns-staging/usr/local/bin/coredns
+          chmod 755 build/coredns-staging/usr/local/bin/coredns
+
       - name: Prepare plugin staging
         run: |
           mkdir -p build/plugin-staging
@@ -45,8 +57,8 @@ jobs:
 
       - name: Fix staging directory ownership
         run: |
-          sudo chown -R root:root build/caddy-staging build/plugin-staging
-          sudo chmod 755 build/caddy-staging build/plugin-staging
+          sudo chown -R root:root build/caddy-staging build/coredns-staging build/plugin-staging
+          sudo chmod 755 build/caddy-staging build/coredns-staging build/plugin-staging
 
       - name: Build packages
         run: |
@@ -54,9 +66,10 @@ jobs:
             -v "${{ github.workspace }}/build:/build" \
             vbatts/slackware:current \
             bash -c "
-              chown root:root /build/caddy-staging /build/plugin-staging
-              chmod 755 /build/caddy-staging /build/plugin-staging
+              chown root:root /build/caddy-staging /build/coredns-staging /build/plugin-staging
+              chmod 755 /build/caddy-staging /build/coredns-staging /build/plugin-staging
               cd /build/caddy-staging && makepkg -l y -c n /build/${{ steps.pkg.outputs.caddy_pkg }}
+              cd /build/coredns-staging && makepkg -l y -c n /build/${{ steps.pkg.outputs.coredns_pkg }}
               cd /build/plugin-staging && makepkg -l y -c n /build/${{ steps.pkg.outputs.plugin_pkg }}
             "
 
@@ -64,16 +77,20 @@ jobs:
         id: md5
         run: |
           CADDY_MD5=$(md5sum "build/${{ steps.pkg.outputs.caddy_pkg }}" | cut -d' ' -f1)
+          COREDNS_MD5=$(md5sum "build/${{ steps.pkg.outputs.coredns_pkg }}" | cut -d' ' -f1)
           PLUGIN_MD5=$(md5sum "build/${{ steps.pkg.outputs.plugin_pkg }}" | cut -d' ' -f1)
           echo "caddy_md5=${CADDY_MD5}" >> "$GITHUB_OUTPUT"
+          echo "coredns_md5=${COREDNS_MD5}" >> "$GITHUB_OUTPUT"
           echo "plugin_md5=${PLUGIN_MD5}" >> "$GITHUB_OUTPUT"
-          echo "Caddy MD5:  ${CADDY_MD5}"
-          echo "Plugin MD5: ${PLUGIN_MD5}"
+          echo "Caddy MD5:   ${CADDY_MD5}"
+          echo "CoreDNS MD5: ${COREDNS_MD5}"
+          echo "Plugin MD5:  ${PLUGIN_MD5}"
 
       - name: Patch .plg with checksums and version
         run: |
           sed -i 's/<!ENTITY version     "[^"]*">/<!ENTITY version     "${{ steps.version.outputs.version }}">/' caddy-server.plg
           sed -i 's/<!ENTITY caddy_md5   "[^"]*">/<!ENTITY caddy_md5   "${{ steps.md5.outputs.caddy_md5 }}">/' caddy-server.plg
+          sed -i 's/<!ENTITY coredns_md5 "[^"]*">/<!ENTITY coredns_md5 "${{ steps.md5.outputs.coredns_md5 }}">/' caddy-server.plg
           sed -i 's/<!ENTITY plugin_md5  "[^"]*">/<!ENTITY plugin_md5  "${{ steps.md5.outputs.plugin_md5 }}">/' caddy-server.plg
 
       - name: Create GitHub Release
@@ -85,6 +102,7 @@ jobs:
 
             ### Packages
             - `${{ steps.pkg.outputs.caddy_pkg }}` (Caddy ${{ steps.pkg.outputs.caddy_ver }})
+            - `${{ steps.pkg.outputs.coredns_pkg }}` (CoreDNS ${{ steps.pkg.outputs.coredns_ver }})
             - `${{ steps.pkg.outputs.plugin_pkg }}`
 
             ### Install
@@ -94,6 +112,7 @@ jobs:
             ```
           files: |
             build/${{ steps.pkg.outputs.caddy_pkg }}
+            build/${{ steps.pkg.outputs.coredns_pkg }}
             build/${{ steps.pkg.outputs.plugin_pkg }}
 
       - name: Update .plg on main branch

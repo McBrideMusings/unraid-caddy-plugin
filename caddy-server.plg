@@ -10,8 +10,11 @@
   <!ENTITY releaseURL  "https://github.com/McBrideMusings/unraid-caddy-plugin/releases/download/v&version;">
   <!ENTITY pluginURL   "&gitURL;/caddy-server.plg">
   <!ENTITY caddy_pkg   "caddy-&caddy_ver;-x86_64-1.txz">
+  <!ENTITY coredns_ver "1.12.1">
+  <!ENTITY coredns_pkg "coredns-&coredns_ver;-x86_64-1.txz">
   <!ENTITY plugin_pkg  "&name;-&version;-x86_64-1.txz">
   <!ENTITY caddy_md5   "07cbd95d30cd5b3bd2f02da8334c3542">
+  <!ENTITY coredns_md5 "COREDNS_MD5_PLACEHOLDER">
   <!ENTITY plugin_md5  "e71f59707c3f7bfa787c5513e24c473a">
 ]>
 
@@ -38,6 +41,14 @@ caddy binary package
 </FILE>
 
 <!--
+coredns binary package
+-->
+<FILE Name="/boot/config/plugins/&name;/&coredns_pkg;" Run="upgradepkg --install-new">
+<URL>&releaseURL;/&coredns_pkg;</URL>
+<MD5>&coredns_md5;</MD5>
+</FILE>
+
+<!--
 plugin package
 -->
 <FILE Name="/boot/config/plugins/&name;/&plugin_pkg;" Run="upgradepkg --install-new">
@@ -60,16 +71,28 @@ if [ ! -f "${CONFIG_DIR}/${PLUGIN_NAME}.cfg" ]; then
   cp /usr/local/emhttp/plugins/${PLUGIN_NAME}/default.cfg "${CONFIG_DIR}/${PLUGIN_NAME}.cfg"
 fi
 
+# Ensure CoreDNS config keys exist
+if ! grep -q '^COREDNS_SERVICE=' "${CONFIG_DIR}/${PLUGIN_NAME}.cfg" 2>/dev/null; then
+  echo 'COREDNS_SERVICE="disable"' >> "${CONFIG_DIR}/${PLUGIN_NAME}.cfg"
+fi
+if ! grep -q '^DNS_ZONE=' "${CONFIG_DIR}/${PLUGIN_NAME}.cfg" 2>/dev/null; then
+  echo 'DNS_ZONE="piercetower.local"' >> "${CONFIG_DIR}/${PLUGIN_NAME}.cfg"
+fi
+if ! grep -q '^DNS_IP=' "${CONFIG_DIR}/${PLUGIN_NAME}.cfg" 2>/dev/null; then
+  echo 'DNS_IP=""' >> "${CONFIG_DIR}/${PLUGIN_NAME}.cfg"
+fi
+
 # Default Caddyfile
 if [ ! -f "${CONFIG_DIR}/Caddyfile" ]; then
   cat > "${CONFIG_DIR}/Caddyfile" &lt;&lt;'CADDYEOF'
-# Caddy configuration file
-# See https://caddyserver.com/docs/caddyfile for syntax
-#
-# Example reverse proxy:
-#
-# my.domain.com {
-#     reverse_proxy localhost:8080
+{
+    auto_https disable_redirects
+}
+
+# Example: reverse proxy a service on your local Tailscale domain
+# audiobooks.piercetower.local {
+#     tls internal { on_demand }
+#     reverse_proxy localhost:13378
 # }
 CADDYEOF
 fi
@@ -83,20 +106,26 @@ removal script: stop service, remove packages, preserve user config
 -->
 <FILE Run="/bin/bash" Method="remove">
 <INLINE>
-# Stop Caddy if running
+# Stop services if running
 /etc/rc.d/rc.caddy stop 2>/dev/null
+/etc/rc.d/rc.coredns stop 2>/dev/null
 
 # Remove installed packages
 removepkg caddy-&caddy_ver;-x86_64-1 2>/dev/null
+removepkg coredns-&coredns_ver;-x86_64-1 2>/dev/null
 removepkg &name;-&version;-x86_64-1 2>/dev/null
 
 # Remove cached packages
 rm -f /boot/config/plugins/&name;/&caddy_pkg;
+rm -f /boot/config/plugins/&name;/&coredns_pkg;
 rm -f /boot/config/plugins/&name;/&plugin_pkg;
 
 # Remove volatile files
 rm -f /var/run/caddy.pid
 rm -f /var/log/caddy.log
+rm -f /var/run/coredns.pid
+rm -f /var/log/coredns.log
+rm -rf /var/run/coredns
 
 # Preserve /boot/config/plugins/caddy-server/ (Caddyfile and user config)
 echo "Caddy Server plugin removed. User configuration preserved at /boot/config/plugins/&name;/"

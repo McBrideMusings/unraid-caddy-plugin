@@ -1,0 +1,188 @@
+Menu="NetworkServices"
+Title="CoreDNS"
+Icon="fa-sitemap"
+---
+<?php
+$plugin = "caddy-server";
+$configDir = "/boot/config/plugins/{$plugin}";
+$configFile = "{$configDir}/{$plugin}.cfg";
+$logFile = "/var/log/coredns.log";
+$pidFile = "/var/run/coredns.pid";
+$runDir = "/var/run/coredns";
+
+$cfg = parse_ini_file($configFile) ?: [];
+$corednsService = $cfg["COREDNS_SERVICE"] ?? "disable";
+$dnsZone = $cfg["DNS_ZONE"] ?? "piercetower.local";
+$dnsIp = $cfg["DNS_IP"] ?? "";
+
+$running = false;
+if (file_exists($pidFile)) {
+    $pid = trim(file_get_contents($pidFile));
+    if ($pid && file_exists("/proc/{$pid}")) {
+        $running = true;
+    }
+}
+
+// Auto-detect Tailscale IP for display
+$detectedIp = trim(shell_exec("tailscale ip -4 2>/dev/null") ?: "");
+$displayIp = $dnsIp ?: $detectedIp ?: "(not available)";
+
+// Read generated zone file if it exists
+$zoneContent = "";
+$zoneFile = "{$runDir}/db.zone";
+if (file_exists($zoneFile)) {
+    $zoneContent = file_get_contents($zoneFile);
+}
+
+$csrf = _var($var,'csrf_token');
+?>
+
+<style>
+#coredns-status { font-weight: bold; }
+#coredns-status.running { color: green; }
+#coredns-status.stopped { color: red; }
+#coredns-log { font-family: monospace; font-size: 12px; white-space: pre-wrap; word-wrap: break-word;
+             background: #1a1a2e; color: #e0e0e0; padding: 10px; max-height: 400px; overflow-y: auto; }
+#coredns-zone-preview { font-family: monospace; font-size: 12px; white-space: pre-wrap;
+             background: #1a1a2e; color: #e0e0e0; padding: 10px; }
+</style>
+
+<div>
+  <span>Status: </span>
+  <span id="coredns-status" class="<?= $running ? 'running' : 'stopped' ?>">
+    <?= $running ? 'Running' : 'Stopped' ?>
+  </span>
+</div>
+<hr>
+
+<form markdown="1" method="POST" action="/update.htm" target="progressFrame">
+  <input type="hidden" name="csrf_token" value="<?=$csrf?>">
+  <dl>
+    <dt>Enable CoreDNS:</dt>
+    <dd>
+      <select name="#command" onchange="this.form.submit()">
+        <option value="/etc/rc.d/rc.coredns enable" <?= $corednsService === "enable" ? 'selected' : '' ?>>Yes</option>
+        <option value="/etc/rc.d/rc.coredns disable" <?= $corednsService !== "enable" ? 'selected' : '' ?>>No</option>
+      </select>
+    </dd>
+  </dl>
+</form>
+
+<?php if ($corednsService === "enable"): ?>
+<div style="margin-bottom: 20px;">
+  <form method="POST" action="/update.htm" target="progressFrame" style="display:inline">
+    <input type="hidden" name="csrf_token" value="<?=$csrf?>">
+    <input type="hidden" name="#command" value="/etc/rc.d/rc.coredns start">
+    <button type="submit" <?= $running ? 'disabled' : '' ?>>Start</button>
+  </form>
+  <form method="POST" action="/update.htm" target="progressFrame" style="display:inline">
+    <input type="hidden" name="csrf_token" value="<?=$csrf?>">
+    <input type="hidden" name="#command" value="/etc/rc.d/rc.coredns stop">
+    <button type="submit" <?= !$running ? 'disabled' : '' ?>>Stop</button>
+  </form>
+  <form method="POST" action="/update.htm" target="progressFrame" style="display:inline">
+    <input type="hidden" name="csrf_token" value="<?=$csrf?>">
+    <input type="hidden" name="#command" value="/etc/rc.d/rc.coredns restart">
+    <button type="submit" <?= !$running ? 'disabled' : '' ?>>Restart</button>
+  </form>
+</div>
+
+<script>
+var csrfToken = csrf_token;
+
+// Save DNS settings via config file update
+function saveDnsSettings() {
+  var zone = document.getElementById('dns-zone-input').value;
+  var ip = document.getElementById('dns-ip-input').value;
+  var statusEl = document.getElementById('dns-save-status');
+  statusEl.textContent = "Saving...";
+
+  var xhr = new XMLHttpRequest();
+  xhr.open("POST", "/plugins/caddy-server/php/coredns-status.php?action=save_settings", true);
+  xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+  xhr.onreadystatechange = function() {
+    if (xhr.readyState === 4) {
+      try {
+        var data = JSON.parse(xhr.responseText);
+        if (data.success) {
+          statusEl.textContent = "Saved.";
+        } else {
+          statusEl.textContent = "Error: " + (data.error || "Unknown error");
+        }
+      } catch(e) {
+        statusEl.textContent = "Error saving.";
+      }
+      setTimeout(function() { statusEl.textContent = ""; }, 5000);
+    }
+  };
+  xhr.send("csrf_token=" + encodeURIComponent(csrfToken) + "&dns_zone=" + encodeURIComponent(zone) + "&dns_ip=" + encodeURIComponent(ip));
+}
+</script>
+
+<div style="margin-bottom: 20px;">
+  <strong>DNS Settings</strong>
+  <br><br>
+  <table>
+    <tr>
+      <td style="padding-right: 15px;">Zone Name:</td>
+      <td>
+        <input type="text" id="dns-zone-input" value="<?= htmlspecialchars($dnsZone) ?>" placeholder="piercetower.local" style="width: 300px;">
+      </td>
+    </tr>
+    <tr>
+      <td style="padding-right: 15px;">IP Address:</td>
+      <td>
+        <input type="text" id="dns-ip-input" value="<?= htmlspecialchars($dnsIp) ?>" placeholder="auto-detect from Tailscale" style="width: 300px;">
+        <?php if (empty($dnsIp) && $detectedIp): ?>
+          <span style="color: #888; margin-left: 8px;">Detected: <?= htmlspecialchars($detectedIp) ?></span>
+        <?php endif; ?>
+      </td>
+    </tr>
+  </table>
+  <br>
+  <button onclick="saveDnsSettings()">Save Settings</button>
+  <span id="dns-save-status" style="margin-left: 8px;"></span>
+</div>
+
+<?php if ($zoneContent): ?>
+<div style="margin-bottom: 20px;">
+  <strong>Generated Zone File</strong>
+  <br><br>
+  <pre id="coredns-zone-preview"><?= htmlspecialchars($zoneContent) ?></pre>
+</div>
+<?php endif; ?>
+
+<div>
+  <strong>Log</strong>
+  <br><br>
+  <pre id="coredns-log">Loading...</pre>
+</div>
+
+<script>
+function fetchCoreDnsStatus() {
+  var xhr = new XMLHttpRequest();
+  xhr.open("GET", "/plugins/caddy-server/php/coredns-status.php?action=status", true);
+  xhr.onreadystatechange = function() {
+    if (xhr.readyState === 4 && xhr.status === 200) {
+      try {
+        var data = JSON.parse(xhr.responseText);
+        var el = document.getElementById("coredns-status");
+        if (data.running) {
+          el.textContent = "Running";
+          el.className = "running";
+        } else {
+          el.textContent = "Stopped";
+          el.className = "stopped";
+        }
+        document.getElementById("coredns-log").textContent = data.log || "(empty)";
+        var logEl = document.getElementById("coredns-log");
+        logEl.scrollTop = logEl.scrollHeight;
+      } catch(e) {}
+    }
+  };
+  xhr.send();
+}
+fetchCoreDnsStatus();
+setInterval(fetchCoreDnsStatus, 5000);
+</script>
+<?php endif; ?>

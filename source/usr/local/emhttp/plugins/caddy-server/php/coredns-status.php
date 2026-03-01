@@ -3,11 +3,10 @@
 $plugin = "caddy-server";
 $configDir = "/boot/config/plugins/{$plugin}";
 $configFile = "{$configDir}/{$plugin}.cfg";
-$caddyfile = "{$configDir}/Caddyfile";
-$logFile = "/var/log/caddy.log";
-$pidFile = "/var/run/caddy.pid";
+$logFile = "/var/log/coredns.log";
+$pidFile = "/var/run/coredns.pid";
 
-// CSRF validation — Unraid strips csrf_token from $_POST, so parse raw body
+// CSRF validation
 $vars = parse_ini_file("/var/local/emhttp/var.ini");
 $csrfToken = $vars["csrf_token"] ?? "";
 
@@ -45,76 +44,67 @@ switch ($action) {
             }
         }
 
-        $version = trim(shell_exec("/usr/local/bin/caddy version 2>/dev/null") ?: "unknown");
-
         $log = "";
         if (file_exists($logFile)) {
             $log = trim(shell_exec("tail -n 50 " . escapeshellarg($logFile)));
         }
 
         $cfg = parse_ini_file($configFile) ?: [];
-        $service = $cfg["SERVICE"] ?? "disable";
 
         echo json_encode([
             "running" => $running,
             "pid" => $pid,
-            "version" => $version,
-            "service" => $service,
+            "service" => $cfg["COREDNS_SERVICE"] ?? "disable",
+            "dns_zone" => $cfg["DNS_ZONE"] ?? "piercetower.local",
+            "dns_ip" => $cfg["DNS_IP"] ?? "",
             "log" => $log,
         ]);
         break;
 
-    case "save_caddyfile":
+    case "save_settings":
         if ($_SERVER["REQUEST_METHOD"] !== "POST") {
             http_response_code(405);
             echo json_encode(["error" => "POST required"]);
             exit;
         }
 
-        $content = $_POST["content"] ?? "";
-        if (empty($content)) {
+        $dnsZone = $_POST["dns_zone"] ?? "";
+        $dnsIp = $_POST["dns_ip"] ?? "";
+        if (empty($dnsZone)) {
             parse_str(file_get_contents("php://input"), $rawPost);
-            $content = $rawPost["content"] ?? "";
+            $dnsZone = $rawPost["dns_zone"] ?? "";
+            $dnsIp = $rawPost["dns_ip"] ?? "";
         }
-        if (file_put_contents($caddyfile, $content) !== false) {
+
+        if (empty($dnsZone)) {
+            http_response_code(400);
+            echo json_encode(["error" => "DNS zone is required"]);
+            exit;
+        }
+
+        // Read current config, update DNS keys, write back
+        $cfg = file_exists($configFile) ? file_get_contents($configFile) : "";
+
+        // Update or add DNS_ZONE
+        if (preg_match('/^DNS_ZONE=/', $cfg, $m, 0)) {
+            $cfg = preg_replace('/^DNS_ZONE=.*/m', 'DNS_ZONE="' . addcslashes($dnsZone, '"') . '"', $cfg);
+        } else {
+            $cfg .= "\nDNS_ZONE=\"" . addcslashes($dnsZone, '"') . "\"";
+        }
+
+        // Update or add DNS_IP
+        if (preg_match('/^DNS_IP=/', $cfg, $m, 0)) {
+            $cfg = preg_replace('/^DNS_IP=.*/m', 'DNS_IP="' . addcslashes($dnsIp, '"') . '"', $cfg);
+        } else {
+            $cfg .= "\nDNS_IP=\"" . addcslashes($dnsIp, '"') . "\"";
+        }
+
+        if (file_put_contents($configFile, $cfg) !== false) {
             echo json_encode(["success" => true]);
         } else {
             http_response_code(500);
-            echo json_encode(["error" => "Failed to write Caddyfile"]);
+            echo json_encode(["error" => "Failed to write config"]);
         }
-        break;
-
-    case "save_and_reload":
-        if ($_SERVER["REQUEST_METHOD"] !== "POST") {
-            http_response_code(405);
-            echo json_encode(["error" => "POST required"]);
-            exit;
-        }
-
-        $content = $_POST["content"] ?? "";
-        if (empty($content)) {
-            parse_str(file_get_contents("php://input"), $rawPost);
-            $content = $rawPost["content"] ?? "";
-        }
-        if (file_put_contents($caddyfile, $content) === false) {
-            http_response_code(500);
-            echo json_encode(["error" => "Failed to write Caddyfile"]);
-            exit;
-        }
-
-        $output = shell_exec("/usr/local/bin/caddy reload --config " . escapeshellarg($caddyfile) . " 2>&1");
-        $running = false;
-        if (file_exists($pidFile)) {
-            $pid = trim(file_get_contents($pidFile));
-            if ($pid && file_exists("/proc/{$pid}")) {
-                $running = true;
-            }
-        }
-
-        echo json_encode([
-            "success" => $running,
-            "output" => trim($output),
-        ]);
         break;
 
     default:
