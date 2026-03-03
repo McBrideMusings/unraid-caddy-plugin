@@ -117,6 +117,57 @@ switch ($action) {
         ]);
         break;
 
+    case "interfaces":
+        $interfaces = [["interface" => "", "ip" => "0.0.0.0", "label" => "All Interfaces"]];
+
+        $labels = [
+            "tailscale0" => "Tailscale",
+            "eth0" => "LAN",
+            "br0" => "LAN",
+            "bond0" => "LAN",
+            "docker0" => "Docker",
+            "virbr0" => "VM Bridge",
+        ];
+        $prefixLabels = [
+            "wg" => "WireGuard",
+            "veth" => "Docker",
+        ];
+
+        $output = shell_exec("ip -o -4 addr show 2>/dev/null") ?: "";
+        $hasTailscale = false;
+        foreach (explode("\n", trim($output)) as $line) {
+            if (empty($line)) continue;
+            if (!preg_match('/^\d+:\s+(\S+)\s+inet\s+([0-9.]+)/', $line, $m)) continue;
+            $iface = $m[1];
+            $ip = $m[2];
+            if ($iface === "lo") continue;
+
+            $label = "Other";
+            if (isset($labels[$iface])) {
+                $label = $labels[$iface];
+            } else {
+                foreach ($prefixLabels as $prefix => $plabel) {
+                    if (strpos($iface, $prefix) === 0) {
+                        $label = $plabel;
+                        break;
+                    }
+                }
+            }
+            if ($iface === "tailscale0") $hasTailscale = true;
+            $interfaces[] = ["interface" => $iface, "ip" => $ip, "label" => $label];
+        }
+
+        // Userspace Tailscale — no tailscale0 interface, try CLI
+        if (!$hasTailscale) {
+            $tsIp = trim(shell_exec("tailscale ip -4 2>/dev/null") ?: "");
+            if (preg_match('/^[0-9.]+$/', $tsIp)) {
+                $interfaces[] = ["interface" => "tailscale", "ip" => $tsIp, "label" => "Tailscale"];
+            }
+        }
+
+        echo json_encode(["interfaces" => $interfaces]);
+        break;
+
     default:
         http_response_code(400);
         echo json_encode(["error" => "Unknown action"]);

@@ -26,5 +26,15 @@ if [ ! -f "${CONFIG_DIR}/Caddyfile" ]; then
 # my.domain.com {
 #     reverse_proxy localhost:8080
 # }
+#
+# Restrict a site to a specific network interface:
+#
+# private.example.com {
+#     bind 100.64.0.1
+#     tls internal {
+#         on_demand
+#     }
+#     reverse_proxy localhost:3000
+# }
 EOF
 fi

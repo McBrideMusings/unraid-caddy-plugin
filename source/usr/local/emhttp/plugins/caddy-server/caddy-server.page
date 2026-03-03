@@ -34,6 +34,19 @@ $csrf = _var($var,'csrf_token');
              background: #1a1a2e; color: #e0e0e0; padding: 10px; max-height: 400px; overflow-y: auto; }
 #caddy-editor { font-family: monospace; font-size: 13px; width: 100%; tab-size: 4; }
 .caddy-btn { margin-right: 8px; }
+#interfaces-panel { margin-bottom: 20px; }
+.collapsible-toggle { cursor: pointer; user-select: none; }
+.collapsible-toggle::before { content: "▶ "; font-size: 10px; display: inline-block; transition: transform 0.2s; }
+.collapsible-toggle.open::before { transform: rotate(90deg); }
+#interfaces-body { display: none; margin-top: 10px; }
+#interfaces-table { border-collapse: collapse; width: 100%; max-width: 600px; }
+#interfaces-table th, #interfaces-table td { text-align: left; padding: 4px 12px 4px 0; }
+#interfaces-table th { border-bottom: 1px solid #555; color: #888; font-weight: normal; font-size: 12px; }
+#interfaces-table td { font-family: monospace; font-size: 13px; }
+.copy-bind { cursor: pointer; color: #1a73e8; font-size: 12px; background: none; border: none; padding: 0; }
+.copy-bind:hover { text-decoration: underline; }
+#interfaces-example { background: #1a1a2e; color: #e0e0e0; padding: 10px; font-family: monospace; font-size: 12px;
+                      white-space: pre-wrap; margin-top: 10px; max-width: 600px; }
 </style>
 
 <div>
@@ -83,8 +96,8 @@ $caCertFile = "/usr/local/emhttp/plugins/{$plugin}/caddy-root-ca.crt";
 $caCertExists = file_exists($caCertFile);
 ?>
 <div style="margin-bottom: 20px;">
-  <strong>SSL Certificate Trust</strong>
-  <br><br>
+  <strong id="ssl-toggle" class="collapsible-toggle" onclick="toggleSection('ssl')">SSL Certificate Trust</strong>
+  <div id="ssl-body" style="display: none; margin-top: 10px;">
   <?php if (!$caCertExists): ?>
     <p style="color: #888;">Start Caddy to generate the CA certificate.</p>
   <?php else: ?>
@@ -129,6 +142,32 @@ $caCertExists = file_exists($caCertFile);
     </div>
     <a href="#" id="ssl-toggle-all" onclick="toggleAllPlatforms(); return false;" style="color: #888; font-size: 12px;">Show all platforms</a>
   <?php endif; ?>
+  </div>
+</div>
+<div id="interfaces-panel">
+  <strong id="interfaces-toggle" class="collapsible-toggle" onclick="toggleInterfaces()">Network Interfaces</strong>
+  <div id="interfaces-body">
+    <p style="color: #888; font-size: 12px; margin: 4px 0 10px;">Use <code>bind &lt;ip&gt;</code> in a site block to restrict it to a specific interface.</p>
+    <table id="interfaces-table">
+      <thead><tr><th>Interface</th><th>IP Address</th><th>Type</th><th></th></tr></thead>
+      <tbody id="interfaces-tbody"><tr><td colspan="4" style="color:#888;">Loading...</td></tr></tbody>
+    </table>
+    <div id="interfaces-example">
+# Public site — only accessible via WireGuard
+wg.example.com {
+    bind 10.0.0.1
+    reverse_proxy localhost:8080
+}
+
+# Private site — only accessible via Tailscale
+ts.example.com {
+    bind 100.64.0.1
+    tls internal {
+        on_demand
+    }
+    reverse_proxy localhost:3000
+}</div>
+  </div>
 </div>
 <hr>
 <?php endif; ?>
@@ -251,4 +290,77 @@ function copyCommand(el) {
     setTimeout(function() { el.title = 'Click to copy'; }, 2000);
   }
 }
+
+function toggleSection(id) {
+  var toggle = document.getElementById(id + '-toggle');
+  var body = document.getElementById(id + '-body');
+  var open = toggle.classList.toggle('open');
+  body.style.display = open ? 'block' : 'none';
+  return open;
+}
+
+var interfacesLoaded = false;
+function toggleInterfaces() {
+  var open = toggleSection('interfaces');
+  if (open && !interfacesLoaded) {
+    interfacesLoaded = true;
+    fetchInterfaces();
+  }
+}
+
+function fetchInterfaces() {
+  var xhr = new XMLHttpRequest();
+  xhr.open("GET", statusUrl + "?action=interfaces", true);
+  xhr.onreadystatechange = function() {
+    if (xhr.readyState !== 4) return;
+    var tbody = document.getElementById('interfaces-tbody');
+    if (xhr.status !== 200) {
+      tbody.innerHTML = '<tr><td colspan="4" style="color:red;">Failed to load interfaces.</td></tr>';
+      return;
+    }
+    try {
+      var data = JSON.parse(xhr.responseText);
+      tbody.innerHTML = '';
+      var ifaces = data.interfaces || [];
+      for (var i = 0; i < ifaces.length; i++) {
+        var iface = ifaces[i];
+        var row = document.createElement('tr');
+
+        var tdIface = document.createElement('td');
+        tdIface.textContent = iface.interface || '\u2014';
+        row.appendChild(tdIface);
+
+        var tdIp = document.createElement('td');
+        tdIp.textContent = iface.ip;
+        row.appendChild(tdIp);
+
+        var tdLabel = document.createElement('td');
+        tdLabel.style.color = '#888';
+        tdLabel.textContent = iface.label;
+        row.appendChild(tdLabel);
+
+        var tdAction = document.createElement('td');
+        var btn = document.createElement('button');
+        btn.className = 'copy-bind';
+        btn.textContent = 'copy bind';
+        btn.setAttribute('data-ip', iface.ip);
+        btn.onclick = function() { copyBind(this.getAttribute('data-ip')); };
+        tdAction.appendChild(btn);
+        row.appendChild(tdAction);
+
+        tbody.appendChild(row);
+      }
+    } catch(e) {
+      tbody.innerHTML = '<tr><td colspan="4" style="color:red;">Failed to load interfaces.</td></tr>';
+    }
+  };
+  xhr.send();
+}
+
+function copyBind(ip) {
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText('    bind ' + ip);
+  }
+}
+
 </script>
