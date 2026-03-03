@@ -52,6 +52,12 @@ start() {
 
   if caddy_running; then
     echo "Caddy started successfully."
+    # Copy root CA cert to web-accessible location for easy download
+    local ca_cert="/root/.local/share/caddy/pki/authorities/local/root.crt"
+    local web_cert="/usr/local/emhttp/plugins/${PLUGIN_NAME}/caddy-root-ca.crt"
+    if [ -f "$ca_cert" ]; then
+      cp "$ca_cert" "$web_cert"
+    fi
   else
     echo "Failed to start Caddy. Check ${LOGFILE} for details."
     return 1

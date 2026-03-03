@@ -29,17 +29,18 @@ coredns_running() {
 }
 
 generate_config() {
-  local zone="${DNS_ZONE:-piercetower.local}"
+  local zone="${DNS_ZONE}"
   local ip="${DNS_IP}"
+  local bind_addr="${DNS_BIND:-$ip}"
 
-  # Auto-detect Tailscale IP if not set
+  if [ -z "$zone" ]; then
+    echo "ERROR: DNS_ZONE is not set. Configure it in the CoreDNS settings page."
+    return 1
+  fi
+
   if [ -z "$ip" ]; then
-    ip=$(tailscale ip -4 2>/dev/null)
-    if [ -z "$ip" ]; then
-      echo "ERROR: DNS_IP not set and could not auto-detect Tailscale IP."
-      return 1
-    fi
-    echo "Auto-detected Tailscale IP: ${ip}"
+    echo "ERROR: DNS_IP is not set. Configure it in the CoreDNS settings page."
+    return 1
   fi
 
   mkdir -p "$RUNDIR"
@@ -57,15 +58,16 @@ generate_config() {
 ns IN A   ${ip}
 ZONEEOF
 
-  # Generate Corefile
+  # Generate Corefile — bind to specific address to avoid conflicts with other DNS services
   cat > "${RUNDIR}/Corefile" <<COREEOF
 ${zone}:53 {
+    bind ${bind_addr}
     file ${RUNDIR}/db.zone
     log
 }
 COREEOF
 
-  echo "Generated CoreDNS config for ${zone} -> ${ip}"
+  echo "Generated CoreDNS config for ${zone} -> ${ip} (listening on ${bind_addr})"
 }
 
 start() {

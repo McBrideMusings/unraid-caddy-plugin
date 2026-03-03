@@ -78,6 +78,59 @@ $csrf = _var($var,'csrf_token');
     <button type="submit" class="caddy-btn" <?= !$running ? 'disabled' : '' ?>>Restart</button>
   </form>
 </div>
+<?php
+$caCertFile = "/usr/local/emhttp/plugins/{$plugin}/caddy-root-ca.crt";
+$caCertExists = file_exists($caCertFile);
+?>
+<div style="margin-bottom: 20px;">
+  <strong>SSL Certificate Trust</strong>
+  <br><br>
+  <?php if (!$caCertExists): ?>
+    <p style="color: #888;">Start Caddy to generate the CA certificate.</p>
+  <?php else: ?>
+    <p style="margin-bottom: 10px;">Caddy generates its own certificate authority for internal TLS. Trust it on your devices to avoid browser warnings.</p>
+    <a href="/plugins/caddy-server/caddy-root-ca.crt" download="caddy-root-ca.crt" class="caddy-btn" style="display: inline-block; padding: 4px 12px; text-decoration: none;">Download Certificate</a>
+    <br><br>
+    <div id="ssl-instructions">
+      <div id="ssl-platform-macos" class="ssl-platform" style="display:none;">
+        <strong>macOS</strong>
+        <p>Download the certificate, then run in Terminal:</p>
+        <pre style="background: #1a1a2e; color: #e0e0e0; padding: 10px; cursor: pointer; position: relative;" onclick="copyCommand(this)" title="Click to copy">sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ~/Downloads/caddy-root-ca.crt</pre>
+      </div>
+      <div id="ssl-platform-windows" class="ssl-platform" style="display:none;">
+        <strong>Windows</strong>
+        <ol>
+          <li>Download the certificate</li>
+          <li>Double-click the .crt file</li>
+          <li>Click "Install Certificate" &rarr; Local Machine</li>
+          <li>"Place all certificates in the following store" &rarr; Trusted Root Certification Authorities</li>
+        </ol>
+      </div>
+      <div id="ssl-platform-linux" class="ssl-platform" style="display:none;">
+        <strong>Linux</strong>
+        <p>Download the certificate, then run:</p>
+        <pre style="background: #1a1a2e; color: #e0e0e0; padding: 10px; cursor: pointer; position: relative;" onclick="copyCommand(this)" title="Click to copy">sudo cp ~/Downloads/caddy-root-ca.crt /usr/local/share/ca-certificates/ &amp;&amp; sudo update-ca-certificates</pre>
+      </div>
+      <div id="ssl-platform-ios" class="ssl-platform" style="display:none;">
+        <strong>iOS</strong>
+        <ol>
+          <li>Tap the Download Certificate link above in Safari</li>
+          <li>Settings &rarr; General &rarr; VPN &amp; Device Management &rarr; install the downloaded profile</li>
+          <li>Settings &rarr; General &rarr; About &rarr; Certificate Trust Settings &rarr; enable full trust for "Caddy Local Authority"</li>
+        </ol>
+      </div>
+      <div id="ssl-platform-android" class="ssl-platform" style="display:none;">
+        <strong>Android</strong>
+        <ol>
+          <li>Download the certificate</li>
+          <li>Settings &rarr; Security &rarr; Encryption &amp; Credentials &rarr; Install a certificate &rarr; CA certificate</li>
+        </ol>
+      </div>
+    </div>
+    <a href="#" id="ssl-toggle-all" onclick="toggleAllPlatforms(); return false;" style="color: #888; font-size: 12px;">Show all platforms</a>
+  <?php endif; ?>
+</div>
+<hr>
 <?php endif; ?>
 
 <div style="margin-bottom: 20px;">
@@ -155,4 +208,47 @@ function saveCaddyfile(reload) {
 
 fetchStatus();
 setInterval(fetchStatus, 5000);
+
+// SSL platform detection
+(function() {
+  var ua = navigator.userAgent;
+  var platform = 'macos';
+  if (/iPhone|iPad|iPod/.test(ua)) platform = 'ios';
+  else if (/Android/.test(ua)) platform = 'android';
+  else if (/Windows/.test(ua)) platform = 'windows';
+  else if (/Linux/.test(ua)) platform = 'linux';
+
+  var el = document.getElementById('ssl-platform-' + platform);
+  if (el) el.style.display = 'block';
+})();
+
+var sslShowAll = false;
+function toggleAllPlatforms() {
+  sslShowAll = !sslShowAll;
+  var els = document.querySelectorAll('.ssl-platform');
+  for (var i = 0; i < els.length; i++) {
+    els[i].style.display = sslShowAll ? 'block' : 'none';
+  }
+  if (!sslShowAll) {
+    // Re-detect and show current platform
+    var ua = navigator.userAgent;
+    var platform = 'macos';
+    if (/iPhone|iPad|iPod/.test(ua)) platform = 'ios';
+    else if (/Android/.test(ua)) platform = 'android';
+    else if (/Windows/.test(ua)) platform = 'windows';
+    else if (/Linux/.test(ua)) platform = 'linux';
+    var el = document.getElementById('ssl-platform-' + platform);
+    if (el) el.style.display = 'block';
+  }
+  document.getElementById('ssl-toggle-all').textContent = sslShowAll ? 'Show only my platform' : 'Show all platforms';
+}
+
+function copyCommand(el) {
+  var text = el.textContent;
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text);
+    el.title = 'Copied!';
+    setTimeout(function() { el.title = 'Click to copy'; }, 2000);
+  }
+}
 </script>

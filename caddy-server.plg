@@ -76,10 +76,13 @@ if ! grep -q '^COREDNS_SERVICE=' "${CONFIG_DIR}/${PLUGIN_NAME}.cfg" 2>/dev/null;
   echo 'COREDNS_SERVICE="disable"' >> "${CONFIG_DIR}/${PLUGIN_NAME}.cfg"
 fi
 if ! grep -q '^DNS_ZONE=' "${CONFIG_DIR}/${PLUGIN_NAME}.cfg" 2>/dev/null; then
-  echo 'DNS_ZONE="piercetower.local"' >> "${CONFIG_DIR}/${PLUGIN_NAME}.cfg"
+  echo 'DNS_ZONE=""' >> "${CONFIG_DIR}/${PLUGIN_NAME}.cfg"
 fi
 if ! grep -q '^DNS_IP=' "${CONFIG_DIR}/${PLUGIN_NAME}.cfg" 2>/dev/null; then
   echo 'DNS_IP=""' >> "${CONFIG_DIR}/${PLUGIN_NAME}.cfg"
+fi
+if ! grep -q '^DNS_BIND=' "${CONFIG_DIR}/${PLUGIN_NAME}.cfg" 2>/dev/null; then
+  echo 'DNS_BIND=""' >> "${CONFIG_DIR}/${PLUGIN_NAME}.cfg"
 fi
 
 # Default Caddyfile
@@ -89,10 +92,16 @@ if [ ! -f "${CONFIG_DIR}/Caddyfile" ]; then
     auto_https disable_redirects
 }
 
-# Example: reverse proxy a service on your local Tailscale domain
-# audiobooks.piercetower.local {
+# Example: public site with automatic HTTPS
+# blog.example.com {
+#     reverse_proxy localhost:8080
+# }
+
+# Example: private site bound to a specific interface
+# app.myserver.local {
+#     bind 100.x.x.x
 #     tls internal { on_demand }
-#     reverse_proxy localhost:13378
+#     reverse_proxy localhost:3000
 # }
 CADDYEOF
 fi

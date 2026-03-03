@@ -55,8 +55,9 @@ switch ($action) {
             "running" => $running,
             "pid" => $pid,
             "service" => $cfg["COREDNS_SERVICE"] ?? "disable",
-            "dns_zone" => $cfg["DNS_ZONE"] ?? "piercetower.local",
+            "dns_zone" => $cfg["DNS_ZONE"] ?? "",
             "dns_ip" => $cfg["DNS_IP"] ?? "",
+            "dns_bind" => $cfg["DNS_BIND"] ?? "",
             "log" => $log,
         ]);
         break;
@@ -70,16 +71,12 @@ switch ($action) {
 
         $dnsZone = $_POST["dns_zone"] ?? "";
         $dnsIp = $_POST["dns_ip"] ?? "";
-        if (empty($dnsZone)) {
+        $dnsBind = $_POST["dns_bind"] ?? "";
+        if (empty($dnsZone) && empty($_POST["dns_zone"])) {
             parse_str(file_get_contents("php://input"), $rawPost);
             $dnsZone = $rawPost["dns_zone"] ?? "";
             $dnsIp = $rawPost["dns_ip"] ?? "";
-        }
-
-        if (empty($dnsZone)) {
-            http_response_code(400);
-            echo json_encode(["error" => "DNS zone is required"]);
-            exit;
+            $dnsBind = $rawPost["dns_bind"] ?? "";
         }
 
         // Read current config, update DNS keys, write back
@@ -97,6 +94,13 @@ switch ($action) {
             $cfg = preg_replace('/^DNS_IP=.*/m', 'DNS_IP="' . addcslashes($dnsIp, '"') . '"', $cfg);
         } else {
             $cfg .= "\nDNS_IP=\"" . addcslashes($dnsIp, '"') . "\"";
+        }
+
+        // Update or add DNS_BIND
+        if (preg_match('/^DNS_BIND=/', $cfg, $m, 0)) {
+            $cfg = preg_replace('/^DNS_BIND=.*/m', 'DNS_BIND="' . addcslashes($dnsBind, '"') . '"', $cfg);
+        } else {
+            $cfg .= "\nDNS_BIND=\"" . addcslashes($dnsBind, '"') . "\"";
         }
 
         if (file_put_contents($configFile, $cfg) !== false) {

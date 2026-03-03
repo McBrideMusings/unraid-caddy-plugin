@@ -12,8 +12,9 @@ $runDir = "/var/run/coredns";
 
 $cfg = parse_ini_file($configFile) ?: [];
 $corednsService = $cfg["COREDNS_SERVICE"] ?? "disable";
-$dnsZone = $cfg["DNS_ZONE"] ?? "piercetower.local";
+$dnsZone = $cfg["DNS_ZONE"] ?? "";
 $dnsIp = $cfg["DNS_IP"] ?? "";
+$dnsBind = $cfg["DNS_BIND"] ?? "";
 
 $running = false;
 if (file_exists($pidFile)) {
@@ -22,10 +23,6 @@ if (file_exists($pidFile)) {
         $running = true;
     }
 }
-
-// Auto-detect Tailscale IP for display
-$detectedIp = trim(shell_exec("tailscale ip -4 2>/dev/null") ?: "");
-$displayIp = $dnsIp ?: $detectedIp ?: "(not available)";
 
 // Read generated zone file if it exists
 $zoneContent = "";
@@ -90,10 +87,10 @@ $csrf = _var($var,'csrf_token');
 <script>
 var csrfToken = csrf_token;
 
-// Save DNS settings via config file update
 function saveDnsSettings() {
   var zone = document.getElementById('dns-zone-input').value;
   var ip = document.getElementById('dns-ip-input').value;
+  var bind = document.getElementById('dns-bind-input').value;
   var statusEl = document.getElementById('dns-save-status');
   statusEl.textContent = "Saving...";
 
@@ -105,7 +102,7 @@ function saveDnsSettings() {
       try {
         var data = JSON.parse(xhr.responseText);
         if (data.success) {
-          statusEl.textContent = "Saved.";
+          statusEl.textContent = "Saved. Restart CoreDNS to apply changes.";
         } else {
           statusEl.textContent = "Error: " + (data.error || "Unknown error");
         }
@@ -115,7 +112,7 @@ function saveDnsSettings() {
       setTimeout(function() { statusEl.textContent = ""; }, 5000);
     }
   };
-  xhr.send("csrf_token=" + encodeURIComponent(csrfToken) + "&dns_zone=" + encodeURIComponent(zone) + "&dns_ip=" + encodeURIComponent(ip));
+  xhr.send("csrf_token=" + encodeURIComponent(csrfToken) + "&dns_zone=" + encodeURIComponent(zone) + "&dns_ip=" + encodeURIComponent(ip) + "&dns_bind=" + encodeURIComponent(bind));
 }
 </script>
 
@@ -126,16 +123,21 @@ function saveDnsSettings() {
     <tr>
       <td style="padding-right: 15px;">Zone Name:</td>
       <td>
-        <input type="text" id="dns-zone-input" value="<?= htmlspecialchars($dnsZone) ?>" placeholder="piercetower.local" style="width: 300px;">
+        <input type="text" id="dns-zone-input" value="<?= htmlspecialchars($dnsZone) ?>" placeholder="e.g. myserver.local" style="width: 300px;">
       </td>
     </tr>
     <tr>
       <td style="padding-right: 15px;">IP Address:</td>
       <td>
-        <input type="text" id="dns-ip-input" value="<?= htmlspecialchars($dnsIp) ?>" placeholder="auto-detect from Tailscale" style="width: 300px;">
-        <?php if (empty($dnsIp) && $detectedIp): ?>
-          <span style="color: #888; margin-left: 8px;">Detected: <?= htmlspecialchars($detectedIp) ?></span>
-        <?php endif; ?>
+        <input type="text" id="dns-ip-input" value="<?= htmlspecialchars($dnsIp) ?>" placeholder="e.g. 100.x.x.x or 192.168.1.x" style="width: 300px;">
+        <span style="color: #888; margin-left: 8px;">What *.zone resolves to</span>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding-right: 15px;">Bind Address:</td>
+      <td>
+        <input type="text" id="dns-bind-input" value="<?= htmlspecialchars($dnsBind) ?>" placeholder="defaults to IP address" style="width: 300px;">
+        <span style="color: #888; margin-left: 8px;">Interface CoreDNS listens on (leave blank to use IP address)</span>
       </td>
     </tr>
   </table>
