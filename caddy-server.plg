@@ -84,6 +84,9 @@ fi
 if ! grep -q '^DNS_BIND=' "${CONFIG_DIR}/${PLUGIN_NAME}.cfg" 2>/dev/null; then
   echo 'DNS_BIND=""' >> "${CONFIG_DIR}/${PLUGIN_NAME}.cfg"
 fi
+if ! grep -q '^CADDY_MODULES=' "${CONFIG_DIR}/${PLUGIN_NAME}.cfg" 2>/dev/null; then
+  echo 'CADDY_MODULES=""' >> "${CONFIG_DIR}/${PLUGIN_NAME}.cfg"
+fi
 
 # Default Caddyfile
 if [ ! -f "${CONFIG_DIR}/Caddyfile" ]; then

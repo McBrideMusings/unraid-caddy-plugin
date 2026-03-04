@@ -45,6 +45,14 @@ $csrf = _var($var,'csrf_token');
 #interfaces-table td { font-family: monospace; font-size: 13px; }
 .copy-bind { cursor: pointer; color: #1a73e8; font-size: 12px; background: none; border: none; padding: 0; }
 .copy-bind:hover { text-decoration: underline; }
+#modules-panel { margin-bottom: 20px; }
+#modules-body { display: none; margin-top: 10px; }
+#modules-list { background: #1a1a2e; color: #e0e0e0; padding: 10px; font-family: monospace; font-size: 12px;
+                white-space: pre-wrap; margin-bottom: 10px; max-width: 600px; max-height: 200px; overflow-y: auto; }
+#modules-editor { font-family: monospace; font-size: 13px; width: 100%; max-width: 600px; tab-size: 4; }
+#modules-status { margin-left: 8px; }
+#modules-progress-bar { display: none; max-width: 600px; height: 6px; background: #333; border-radius: 3px; margin-top: 8px; overflow: hidden; }
+#modules-progress-bar div { height: 100%; background: #1a73e8; border-radius: 3px; transition: width 0.3s ease; }
 #interfaces-example { background: #1a1a2e; color: #e0e0e0; padding: 10px; font-family: monospace; font-size: 12px;
                       white-space: pre-wrap; margin-top: 10px; max-width: 600px; }
 </style>
@@ -167,6 +175,32 @@ ts.example.com {
     }
     reverse_proxy localhost:3000
 }</div>
+  </div>
+</div>
+<div id="modules-panel">
+  <strong id="modules-toggle" class="collapsible-toggle" onclick="toggleModules()">Caddy Modules</strong>
+  <div id="modules-body">
+    <p style="color: #888; font-size: 12px; margin: 4px 0 10px;">
+      Add <a href="https://caddyserver.com/download" target="_blank" style="color: #1a73e8;">Caddy modules</a> by entering Go module paths below. The plugin downloads a custom-built binary from Caddy's build server.
+    </p>
+    <strong style="font-size: 12px; color: #888;">Installed non-standard modules</strong>
+    <pre id="modules-list">Loading...</pre>
+    <div id="modules-staged-section" style="display:none; margin-bottom: 12px;">
+      <strong style="font-size: 12px; color: #888;">Staged binary <span id="modules-staged-ver"></span></strong>
+      <pre id="modules-staged-info" style="background: #1a1a2e; color: #e0e0e0; padding: 10px; font-family: monospace; font-size: 12px;
+                  white-space: pre-wrap; max-width: 600px; margin-top: 4px;"></pre>
+      <button class="caddy-btn" onclick="installCaddy()">Install</button>
+      <button class="caddy-btn" onclick="deleteStaged()">Delete</button>
+      <span id="modules-install-status"></span>
+    </div>
+    <strong style="font-size: 12px; color: #888;">Module paths (one per line)</strong>
+    <br>
+    <textarea id="modules-editor" rows="6" placeholder="github.com/caddy-dns/cloudflare"></textarea>
+    <br><br>
+    <button class="caddy-btn" id="modules-restore-btn" onclick="restoreCaddy()" style="display:none;">Restore Stock</button>
+    <button class="caddy-btn" id="modules-download-btn" onclick="downloadCaddy()">Download Custom Binary</button>
+    <span id="modules-status"></span>
+    <div id="modules-progress-bar"><div></div></div>
   </div>
 </div>
 <hr>
@@ -361,6 +395,229 @@ function copyBind(ip) {
   if (navigator.clipboard) {
     navigator.clipboard.writeText('    bind ' + ip);
   }
+}
+
+var modulesLoaded = false;
+function toggleModules() {
+  var open = toggleSection('modules');
+  if (open && !modulesLoaded) {
+    modulesLoaded = true;
+    fetchModules();
+  }
+}
+
+function updateModuleButtons(data) {
+  var restoreBtn = document.getElementById('modules-restore-btn');
+  var stagedSection = document.getElementById('modules-staged-section');
+  var stagedInfo = document.getElementById('modules-staged-info');
+  var stagedVer = document.getElementById('modules-staged-ver');
+
+  restoreBtn.style.display = data.has_backup ? 'inline-block' : 'none';
+
+  if (data.staged_ready) {
+    stagedSection.style.display = 'block';
+    stagedVer.textContent = data.staged_version ? "(" + data.staged_version + ")" : "";
+    var mods = data.staged_modules || [];
+    if (mods.length === 0) {
+      stagedInfo.textContent = "No non-standard modules (stock build)";
+    } else {
+      var lines = [];
+      for (var i = 0; i < mods.length; i++) {
+        lines.push(mods[i].module + "  " + mods[i].package);
+      }
+      stagedInfo.textContent = mods.length + " non-standard module" + (mods.length > 1 ? "s" : "") + ":\n" + lines.join("\n");
+    }
+  } else {
+    stagedSection.style.display = 'none';
+  }
+}
+
+function fetchModules() {
+  var xhr = new XMLHttpRequest();
+  xhr.open("GET", statusUrl + "?action=modules", true);
+  xhr.onreadystatechange = function() {
+    if (xhr.readyState !== 4) return;
+    var listEl = document.getElementById('modules-list');
+    var editorEl = document.getElementById('modules-editor');
+    if (xhr.status !== 200) {
+      listEl.textContent = "Failed to load module info.";
+      return;
+    }
+    try {
+      var data = JSON.parse(xhr.responseText);
+      var installed = data.installed_modules || [];
+      if (installed.length === 0) {
+        listEl.textContent = "No non-standard modules installed.";
+      } else {
+        var lines = [];
+        for (var i = 0; i < installed.length; i++) {
+          lines.push(installed[i].module + " (" + installed[i].package + ")");
+        }
+        listEl.textContent = lines.join("\n");
+      }
+      var configured = data.configured_modules || [];
+      if (configured.length > 0) {
+        editorEl.value = configured.join("\n");
+      }
+      updateModuleButtons(data);
+    } catch(e) {
+      listEl.textContent = "Failed to parse module info.";
+    }
+  };
+  xhr.send();
+}
+
+var rebuildProgressTimer = null;
+
+function pollRebuildProgress() {
+  var statusEl = document.getElementById('modules-status');
+  var barEl = document.getElementById('modules-progress-bar');
+  var xhr = new XMLHttpRequest();
+  xhr.open("GET", statusUrl + "?action=rebuild_progress", true);
+  xhr.onreadystatechange = function() {
+    if (xhr.readyState !== 4 || xhr.status !== 200) return;
+    try {
+      var data = JSON.parse(xhr.responseText);
+      if (data.step) {
+        statusEl.textContent = data.step;
+        barEl.style.display = 'block';
+        barEl.querySelector('div').style.width = data.progress + '%';
+      }
+    } catch(e) {}
+  };
+  xhr.send();
+}
+
+function downloadCaddy() {
+  var editor = document.getElementById('modules-editor');
+  var statusEl = document.getElementById('modules-status');
+  var barEl = document.getElementById('modules-progress-bar');
+  var modules = editor.value.trim();
+
+  if (!modules) {
+    statusEl.textContent = "Enter at least one module path.";
+    statusEl.style.color = "red";
+    setTimeout(function() { statusEl.textContent = ""; }, 5000);
+    return;
+  }
+
+  statusEl.textContent = "Starting download...";
+  statusEl.style.color = "#888";
+  barEl.style.display = 'block';
+  barEl.querySelector('div').style.width = '0%';
+
+  var btns = document.querySelectorAll('#modules-body button');
+  for (var i = 0; i < btns.length; i++) btns[i].disabled = true;
+
+  rebuildProgressTimer = setInterval(pollRebuildProgress, 1500);
+
+  var xhr = new XMLHttpRequest();
+  xhr.open("POST", statusUrl + "?action=download_caddy", true);
+  xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+  xhr.onreadystatechange = function() {
+    if (xhr.readyState !== 4) return;
+    clearInterval(rebuildProgressTimer);
+    for (var i = 0; i < btns.length; i++) btns[i].disabled = false;
+    try {
+      var data = JSON.parse(xhr.responseText);
+      if (data.success) {
+        barEl.querySelector('div').style.width = '100%';
+        statusEl.textContent = "Download complete — review staged binary above, then install.";
+        statusEl.style.color = "green";
+        fetchModules();
+      } else {
+        statusEl.textContent = "Error: " + (data.error || "Unknown error") + (data.detail ? " — " + data.detail : "");
+        statusEl.style.color = "red";
+      }
+    } catch(e) {
+      statusEl.textContent = "Error: " + xhr.responseText;
+      statusEl.style.color = "red";
+    }
+    setTimeout(function() { barEl.style.display = 'none'; }, 3000);
+    setTimeout(function() { statusEl.textContent = ""; }, 10000);
+  };
+  xhr.send("csrf_token=" + encodeURIComponent(csrfToken) + "&modules=" + encodeURIComponent(modules));
+}
+
+function installCaddy() {
+  if (!confirm("Install the staged custom binary? Caddy will be briefly restarted if running.")) return;
+
+  var statusEl = document.getElementById('modules-install-status');
+  statusEl.textContent = "Installing...";
+  statusEl.style.color = "#888";
+
+  var btns = document.querySelectorAll('#modules-staged-section button');
+  for (var i = 0; i < btns.length; i++) btns[i].disabled = true;
+
+  var xhr = new XMLHttpRequest();
+  xhr.open("POST", statusUrl + "?action=install_caddy", true);
+  xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+  xhr.onreadystatechange = function() {
+    if (xhr.readyState !== 4) return;
+    for (var i = 0; i < btns.length; i++) btns[i].disabled = false;
+    try {
+      var data = JSON.parse(xhr.responseText);
+      if (data.success) {
+        statusEl.textContent = "Installed — " + data.version + (data.restarted ? " (restarted)" : "");
+        statusEl.style.color = "green";
+        fetchModules();
+        fetchStatus();
+      } else {
+        statusEl.textContent = "Error: " + (data.error || "Unknown error");
+        statusEl.style.color = "red";
+      }
+    } catch(e) {
+      statusEl.textContent = "Error installing.";
+      statusEl.style.color = "red";
+    }
+    setTimeout(function() { statusEl.textContent = ""; }, 10000);
+  };
+  xhr.send("csrf_token=" + encodeURIComponent(csrfToken));
+}
+
+function deleteStaged() {
+  var statusEl = document.getElementById('modules-install-status');
+  var xhr = new XMLHttpRequest();
+  xhr.open("POST", statusUrl + "?action=delete_staged", true);
+  xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+  xhr.onreadystatechange = function() {
+    if (xhr.readyState !== 4) return;
+    fetchModules();
+  };
+  xhr.send("csrf_token=" + encodeURIComponent(csrfToken));
+}
+
+function restoreCaddy() {
+  if (!confirm("Restore the stock Caddy binary? This will remove all custom modules.")) return;
+
+  var statusEl = document.getElementById('modules-status');
+  statusEl.textContent = "Restoring stock binary...";
+  statusEl.style.color = "#888";
+
+  var xhr = new XMLHttpRequest();
+  xhr.open("POST", statusUrl + "?action=restore_caddy", true);
+  xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+  xhr.onreadystatechange = function() {
+    if (xhr.readyState !== 4) return;
+    try {
+      var data = JSON.parse(xhr.responseText);
+      if (data.success) {
+        statusEl.textContent = "Restored — " + data.version;
+        statusEl.style.color = "green";
+        document.getElementById('modules-editor').value = "";
+        fetchModules();
+        fetchStatus();
+      } else {
+        statusEl.textContent = "Error: " + (data.error || "Unknown error");
+        statusEl.style.color = "red";
+      }
+    } catch(e) {
+      statusEl.textContent = "Error restoring.";
+      statusEl.style.color = "red";
+    }
+    setTimeout(function() { statusEl.textContent = ""; }, 10000);
+  };
+  xhr.send("csrf_token=" + encodeURIComponent(csrfToken));
 }
 
 </script>
