@@ -135,6 +135,8 @@ rm -f /boot/config/plugins/&name;/&plugin_pkg;
 # Remove volatile files
 rm -f /var/run/caddy.pid
 rm -f /var/log/caddy.log
+rm -f /var/log/caddy-plugin.log*
+rm -f /etc/logrotate.d/caddy-plugin
 rm -f /var/run/coredns.pid
 rm -f /var/log/coredns.log
 rm -rf /var/run/coredns

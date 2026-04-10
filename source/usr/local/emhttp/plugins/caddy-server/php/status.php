@@ -6,6 +6,13 @@ $configFile = "{$configDir}/{$plugin}.cfg";
 $caddyfile = "{$configDir}/Caddyfile";
 $logFile = "/var/log/caddy.log";
 $pidFile = "/var/run/caddy.pid";
+$pluginLogFile = "/var/log/caddy-plugin.log";
+
+function pluginLog($message) {
+    global $pluginLogFile;
+    $ts = date("Y-m-d H:i:s");
+    file_put_contents($pluginLogFile, "[{$ts}] {$message}\n", FILE_APPEND);
+}
 
 // CSRF validation — Unraid strips csrf_token from $_POST, so parse raw body
 $vars = parse_ini_file("/var/local/emhttp/var.ini");
@@ -125,8 +132,8 @@ switch ($action) {
         foreach (explode("\n", trim($rawModules)) as $line) {
             $line = trim($line);
             if (empty($line)) continue;
-            // Lines with a package path in parentheses are non-standard if not from caddyserver/caddy
-            if (preg_match('/^(\S+)\s+\((.+)\)$/', $line, $m)) {
+            // Module lines: "module.name package/path" or "module.name (package/path)"
+            if (preg_match('/^(\S+)\s+\(?(\S+?)\)?$/', $line, $m)) {
                 $pkg = $m[2];
                 if (strpos($pkg, "github.com/caddyserver/caddy") !== 0) {
                     $installed[] = ["module" => $m[1], "package" => $pkg];
@@ -209,6 +216,8 @@ switch ($action) {
             }
         }
 
+        pluginLog("download_caddy: starting download for modules: " . implode(", ", $modules));
+
         $writeProgress("Detecting Caddy version...", 10);
         $versionRaw = trim(shell_exec("/usr/local/bin/caddy version 2>/dev/null") ?: "");
         $version = preg_match('/^v?[\d.]+/', $versionRaw, $vm) ? $vm[0] : "";
@@ -242,6 +251,7 @@ switch ($action) {
             if (empty($errDetail)) {
                 $errDetail = "HTTP {$httpCode} — check that module paths are registered at caddyserver.com/download";
             }
+            pluginLog("download_caddy: failed — {$errDetail}");
             http_response_code(502);
             echo json_encode(["error" => "Download failed", "detail" => $errDetail]);
             exit;
@@ -267,6 +277,8 @@ switch ($action) {
         }
         file_put_contents($configFile, implode("\n", $cfgLines) . "\n");
 
+        pluginLog("download_caddy: success — staged {$testVersion} with " . count($modules) . " module(s)");
+
         @unlink($progressFile);
         echo json_encode([
             "success" => true,
@@ -289,36 +301,125 @@ switch ($action) {
             exit;
         }
 
-        // Stop Caddy if running
+        $caddyBin = "/usr/local/bin/caddy";
+
+        pluginLog("install_caddy: starting install of staged binary");
+
+        // Validate the staged binary can parse the current config before
+        // touching anything. This catches module mismatches and config errors.
+        $validateOutput = trim(shell_exec(escapeshellarg($tmpBin) . " validate --config " . escapeshellarg($caddyfile) . " 2>&1") ?: "");
+        if (strpos($validateOutput, "Valid configuration") === false) {
+            pluginLog("install_caddy: staged binary failed config validation — {$validateOutput}");
+            http_response_code(400);
+            echo json_encode(["error" => "Staged binary failed config validation", "detail" => $validateOutput]);
+            exit;
+        }
+
+        // Check if Caddy is running — we need to know for the restart strategy.
         $wasRunning = false;
         if (file_exists($pidFile)) {
             $pid = trim(file_get_contents($pidFile));
             if ($pid && file_exists("/proc/{$pid}")) {
                 $wasRunning = true;
-                shell_exec("/etc/rc.d/rc.caddy stop 2>&1");
-                sleep(1);
             }
         }
 
-        // Backup and swap
-        $caddyBin = "/usr/local/bin/caddy";
-        copy($caddyBin, "{$caddyBin}.bak");
-        rename($tmpBin, $caddyBin);
+        // Backup current binary. Use copy+unlink instead of rename() because
+        // /tmp is typically a tmpfs and rename() fails across mount points.
+        if (!copy($caddyBin, "{$caddyBin}.bak")) {
+            http_response_code(500);
+            echo json_encode(["error" => "Failed to create backup of current binary"]);
+            exit;
+        }
+
+        // Swap in the new binary while Caddy is still running.
+        // We do NOT stop Caddy first — the Unraid web UI may be proxied through
+        // Caddy, so stopping it would kill this HTTP response mid-flight.
+        pluginLog("install_caddy: swapping binary (was_running={$wasRunning})");
+        pluginLog("install_caddy: tmpBin={$tmpBin} exists=" . (file_exists($tmpBin) ? "yes" : "no") . " size=" . @filesize($tmpBin) . " readable=" . (is_readable($tmpBin) ? "yes" : "no"));
+        pluginLog("install_caddy: caddyBin={$caddyBin} exists=" . (file_exists($caddyBin) ? "yes" : "no") . " size=" . @filesize($caddyBin) . " writable=" . (is_writable($caddyBin) ? "yes" : "no"));
+        pluginLog("install_caddy: caddyBin dir=" . dirname($caddyBin) . " dir_writable=" . (is_writable(dirname($caddyBin)) ? "yes" : "no"));
+        // Unlink first — the kernel returns ETXTBSY if we try to overwrite a
+        // running executable, but unlink just removes the directory entry while
+        // the running process keeps its open file handle.
+        if (!@unlink($caddyBin)) {
+            $err = error_get_last();
+            $errMsg = $err ? $err["message"] : "unknown";
+            pluginLog("install_caddy: unlink failed — {$errMsg}");
+            http_response_code(500);
+            echo json_encode(["error" => "Failed to remove current binary", "detail" => $errMsg]);
+            exit;
+        }
+        $copyResult = @copy($tmpBin, $caddyBin);
+        if (!$copyResult) {
+            $err = error_get_last();
+            $errMsg = $err ? $err["message"] : "unknown";
+            pluginLog("install_caddy: copy failed — {$errMsg}");
+            // Restore from backup since we already unlinked
+            copy("{$caddyBin}.bak", $caddyBin);
+            chmod($caddyBin, 0755);
+            http_response_code(500);
+            echo json_encode(["error" => "Failed to install staged binary", "detail" => $errMsg]);
+            exit;
+        }
+        unlink($tmpBin);
         chmod($caddyBin, 0755);
 
-        // Restart if was running
-        $startOutput = "";
+        // Gracefully restart Caddy with the new binary. SIGUSR1 tells Caddy to
+        // re-exec itself — it spawns a new process with the updated binary and
+        // hands off listeners without dropping connections.
+        $restartOutput = "";
+        $healthy = false;
         if ($wasRunning) {
-            $startOutput = trim(shell_exec("/etc/rc.d/rc.caddy start 2>&1"));
+            $pid = trim(file_get_contents($pidFile));
+            exec("kill -USR1 " . intval($pid) . " 2>&1", $sigOutput, $sigRet);
+            $restartOutput = implode("\n", $sigOutput);
+
+            // Give the new process up to 5 seconds to come up healthy.
+            for ($i = 0; $i < 10; $i++) {
+                usleep(500000);
+                $configCheck = @file_get_contents("http://127.0.0.1:2019/config/apps/http/servers/");
+                if ($configCheck !== false && strlen($configCheck) > 10) {
+                    $healthy = true;
+                    break;
+                }
+            }
+
+            if (!$healthy) {
+                // Graceful restart failed. Roll back and force restart.
+                pluginLog("install_caddy: health check failed after restart — rolling back");
+                copy("{$caddyBin}.bak", $caddyBin);
+                chmod($caddyBin, 0755);
+                shell_exec("/etc/rc.d/rc.caddy stop 2>&1");
+                sleep(1);
+                shell_exec("/etc/rc.d/rc.caddy start 2>&1");
+
+                $rollbackLog = trim(shell_exec("tail -n 20 " . escapeshellarg($logFile) . " 2>/dev/null") ?: "");
+                pluginLog("install_caddy: rollback complete");
+                http_response_code(500);
+                echo json_encode([
+                    "error" => "Caddy failed to serve after install — rolled back to previous binary",
+                    "detail" => $rollbackLog,
+                ]);
+                exit;
+            }
+
+            // Update PID file — the re-exec'd process has a new PID.
+            $newPid = trim(shell_exec("pgrep -x caddy 2>/dev/null | head -1") ?: "");
+            if (!empty($newPid)) {
+                file_put_contents($pidFile, $newPid);
+            }
         }
 
         $newVersion = trim(shell_exec("{$caddyBin} version 2>/dev/null") ?: "unknown");
+        pluginLog("install_caddy: success — version {$newVersion}, healthy={$healthy}");
 
         echo json_encode([
             "success" => true,
             "version" => $newVersion,
             "restarted" => $wasRunning,
-            "start_output" => $startOutput,
+            "healthy" => $healthy,
+            "start_output" => $restartOutput,
         ]);
         break;
 
@@ -350,6 +451,8 @@ switch ($action) {
             exit;
         }
 
+        pluginLog("restore_caddy: starting restore from backup");
+
         // Check if Caddy is running
         $wasRunning = false;
         if (file_exists($pidFile)) {
@@ -362,7 +465,14 @@ switch ($action) {
         }
 
         // Restore backup
-        rename($bakFile, $caddyBin);
+        if (!copy($bakFile, $caddyBin)) {
+            pluginLog("restore_caddy: failed to copy backup binary");
+            http_response_code(500);
+            echo json_encode(["error" => "Failed to restore backup binary"]);
+            if ($wasRunning) shell_exec("/etc/rc.d/rc.caddy start 2>&1");
+            exit;
+        }
+        unlink($bakFile);
         chmod($caddyBin, 0755);
 
         // Clear CADDY_MODULES in config
@@ -374,18 +484,41 @@ switch ($action) {
         }
         file_put_contents($configFile, implode("\n", $cfgLines) . "\n");
 
-        // Restart if was running
+        // Restart and verify health
         $startOutput = "";
+        $healthy = false;
         if ($wasRunning) {
             $startOutput = trim(shell_exec("/etc/rc.d/rc.caddy start 2>&1"));
+
+            for ($i = 0; $i < 10; $i++) {
+                usleep(500000);
+                $configCheck = @file_get_contents("http://127.0.0.1:2019/config/apps/http/servers/");
+                if ($configCheck !== false && strlen($configCheck) > 10) {
+                    $healthy = true;
+                    break;
+                }
+            }
+
+            if (!$healthy) {
+                pluginLog("restore_caddy: health check failed after restart");
+                $rollbackLog = trim(shell_exec("tail -n 20 " . escapeshellarg($logFile) . " 2>/dev/null") ?: "");
+                http_response_code(500);
+                echo json_encode([
+                    "error" => "Caddy failed to serve after restore",
+                    "detail" => $rollbackLog,
+                ]);
+                exit;
+            }
         }
 
         $newVersion = trim(shell_exec("{$caddyBin} version 2>/dev/null") ?: "unknown");
+        pluginLog("restore_caddy: success — restored to {$newVersion}");
 
         echo json_encode([
             "success" => true,
             "version" => $newVersion,
             "restarted" => $wasRunning,
+            "healthy" => $healthy,
             "start_output" => $startOutput,
         ]);
         break;

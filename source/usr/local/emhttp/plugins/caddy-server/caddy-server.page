@@ -563,14 +563,14 @@ function installCaddy() {
         fetchModules();
         fetchStatus();
       } else {
-        statusEl.textContent = "Error: " + (data.error || "Unknown error");
+        statusEl.textContent = "Error: " + (data.error || "Unknown error") + (data.detail ? " — " + data.detail : "");
         statusEl.style.color = "red";
       }
     } catch(e) {
       statusEl.textContent = "Error installing.";
       statusEl.style.color = "red";
     }
-    setTimeout(function() { statusEl.textContent = ""; }, 10000);
+    setTimeout(function() { statusEl.textContent = ""; }, 15000);
   };
   xhr.send("csrf_token=" + encodeURIComponent(csrfToken));
 }
