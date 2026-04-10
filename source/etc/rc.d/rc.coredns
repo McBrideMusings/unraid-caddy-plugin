@@ -29,21 +29,52 @@ coredns_running() {
 }
 
 generate_config() {
-  local zones_raw="${DNS_ZONES:-$DNS_ZONE}"
-  local ip="${DNS_IP}"
-  local bind_addr="${DNS_BIND:-$ip}"
+  local zone_map="${DNS_ZONE_MAP}"
+  local fallback_ip="${DNS_IP}"
+  local bind_addr="${DNS_BIND}"
 
-  # Normalize newlines/commas to spaces so textarea input works
-  local zones
-  zones=$(echo "$zones_raw" | tr '\n,' '  ' | xargs)
+  # Build associative array of zone->ip from DNS_ZONE_MAP
+  declare -A zone_to_ip
+  local zones=""
+
+  if [ -n "$zone_map" ]; then
+    local entry
+    for entry in $zone_map; do
+      local z="${entry%%=*}"
+      local i="${entry#*=}"
+      if [ -n "$z" ] && [ -n "$i" ]; then
+        zone_to_ip["$z"]="$i"
+        zones="$zones $z"
+      fi
+    done
+    zones=$(echo "$zones" | xargs)
+  fi
+
+  # Fallback to legacy DNS_ZONES + DNS_IP if no zone map
+  if [ -z "$zones" ]; then
+    local zones_raw="${DNS_ZONES:-$DNS_ZONE}"
+    zones=$(echo "$zones_raw" | tr '\n,' '  ' | xargs)
+    if [ -n "$zones" ] && [ -n "$fallback_ip" ]; then
+      local z
+      for z in $zones; do
+        zone_to_ip["$z"]="$fallback_ip"
+      done
+    fi
+  fi
 
   if [ -z "$zones" ]; then
-    echo "ERROR: DNS_ZONES/DNS_ZONE is not set. Configure it in the CoreDNS settings page."
+    echo "ERROR: No DNS zones configured. Configure them in the CoreDNS settings page."
     return 1
   fi
 
-  if [ -z "$ip" ]; then
-    echo "ERROR: DNS_IP is not set. Configure it in the CoreDNS settings page."
+  # Default bind address: use DNS_BIND, or the first zone's IP
+  if [ -z "$bind_addr" ]; then
+    local first_zone="${zones%% *}"
+    bind_addr="${zone_to_ip[$first_zone]:-$fallback_ip}"
+  fi
+
+  if [ -z "$bind_addr" ]; then
+    echo "ERROR: No bind address configured and no IP to fall back to."
     return 1
   fi
 
@@ -63,13 +94,20 @@ generate_config() {
       echo "ERROR: Invalid zone name: ${zone}"
       return 1
     fi
+
+    local zone_ip="${zone_to_ip[$zone]}"
+    if [ -z "$zone_ip" ]; then
+      echo "ERROR: No IP address for zone: ${zone}"
+      return 1
+    fi
+
     cat > "${RUNDIR}/db.${zone}.zone" <<ZONEEOF
 \$TTL 300
 @  IN SOA ns.${zone}. admin.${zone}. ${serial} 3600 900 604800 300
 @  IN NS  ns.${zone}.
-@  IN A   ${ip}
-*  IN A   ${ip}
-ns IN A   ${ip}
+@  IN A   ${zone_ip}
+*  IN A   ${zone_ip}
+ns IN A   ${zone_ip}
 ZONEEOF
 
     cat >> "${RUNDIR}/Corefile" <<COREEOF
@@ -82,7 +120,11 @@ ${zone}:53 {
 COREEOF
   done
 
-  echo "Generated CoreDNS config for zones: ${zones} -> ${ip} (listening on ${bind_addr})"
+  echo "Generated CoreDNS config for zones:"
+  for zone in $zones; do
+    echo "  ${zone} -> ${zone_to_ip[$zone]}"
+  done
+  echo "Listening on ${bind_addr}"
 }
 
 start() {

@@ -12,11 +12,34 @@ $runDir = "/var/run/coredns";
 
 $cfg = parse_ini_file($configFile) ?: [];
 $corednsService = $cfg["COREDNS_SERVICE"] ?? "disable";
-$dnsZones = $cfg["DNS_ZONES"] ?? ($cfg["DNS_ZONE"] ?? "");
-// Normalize: display one zone per line
-$dnsZonesDisplay = trim(preg_replace('/[\s,]+/', "\n", $dnsZones));
-$dnsIp = $cfg["DNS_IP"] ?? "";
 $dnsBind = $cfg["DNS_BIND"] ?? "";
+
+// Parse DNS_ZONE_MAP into structured array
+$zoneMap = [];
+$zoneMapRaw = $cfg["DNS_ZONE_MAP"] ?? "";
+if (!empty($zoneMapRaw)) {
+    foreach (preg_split('/\s+/', trim($zoneMapRaw)) as $entry) {
+        if (strpos($entry, '=') !== false) {
+            list($z, $i) = explode('=', $entry, 2);
+            if (!empty($z) && !empty($i)) {
+                $zoneMap[] = ["zone" => $z, "ip" => $i];
+            }
+        }
+    }
+}
+// Fallback: build from legacy DNS_ZONES + DNS_IP
+if (empty($zoneMap)) {
+    $legacyZones = $cfg["DNS_ZONES"] ?? ($cfg["DNS_ZONE"] ?? "");
+    $legacyIp = $cfg["DNS_IP"] ?? "";
+    if (!empty($legacyZones) && !empty($legacyIp)) {
+        foreach (preg_split('/[\s,]+/', trim($legacyZones)) as $z) {
+            if (!empty($z)) {
+                $zoneMap[] = ["zone" => $z, "ip" => $legacyIp];
+            }
+        }
+    }
+}
+$zoneMapJson = json_encode($zoneMap);
 
 $running = false;
 if (file_exists($pidFile)) {
@@ -91,10 +114,76 @@ $csrf = _var($var,'csrf_token');
 
 <script>
 var csrfToken = csrf_token;
+var zoneMap = <?= $zoneMapJson ?>;
+
+function renderZoneTable() {
+  var tbody = document.getElementById('zone-rows');
+  tbody.innerHTML = '';
+  if (zoneMap.length === 0) {
+    addZoneRow();
+    return;
+  }
+  for (var i = 0; i < zoneMap.length; i++) {
+    insertZoneRow(zoneMap[i].zone, zoneMap[i].ip);
+  }
+}
+
+function insertZoneRow(zone, ip) {
+  var tbody = document.getElementById('zone-rows');
+  var row = tbody.insertRow();
+
+  var td1 = row.insertCell();
+  var zoneInput = document.createElement('input');
+  zoneInput.type = 'text';
+  zoneInput.className = 'zone-name';
+  zoneInput.value = zone || '';
+  zoneInput.placeholder = 'myserver.lan';
+  zoneInput.style.cssText = 'width: 200px; font-family: monospace;';
+  td1.appendChild(zoneInput);
+
+  var td2 = row.insertCell();
+  var ipInput = document.createElement('input');
+  ipInput.type = 'text';
+  ipInput.className = 'zone-ip';
+  ipInput.value = ip || '';
+  ipInput.placeholder = '100.x.x.x';
+  ipInput.style.cssText = 'width: 180px; font-family: monospace;';
+  td2.appendChild(ipInput);
+
+  var td3 = row.insertCell();
+  var btn = document.createElement('button');
+  btn.textContent = '\u2715';
+  btn.style.color = '#c00';
+  btn.addEventListener('click', function() { removeZoneRow(this); });
+  td3.appendChild(btn);
+}
+
+function addZoneRow() {
+  insertZoneRow('', '');
+}
+
+function removeZoneRow(btn) {
+  var tbody = document.getElementById('zone-rows');
+  if (tbody.rows.length <= 1) return;
+  var row = btn.closest('tr');
+  row.remove();
+}
+
+function collectZoneMap() {
+  var rows = document.getElementById('zone-rows').rows;
+  var pairs = [];
+  for (var i = 0; i < rows.length; i++) {
+    var z = rows[i].querySelector('.zone-name').value.trim();
+    var ip = rows[i].querySelector('.zone-ip').value.trim();
+    if (z || ip) {
+      pairs.push({zone: z, ip: ip});
+    }
+  }
+  return pairs;
+}
 
 function saveDnsSettings() {
-  var zones = document.getElementById('dns-zones-input').value;
-  var ip = document.getElementById('dns-ip-input').value;
+  var pairs = collectZoneMap();
   var bind = document.getElementById('dns-bind-input').value;
   var statusEl = document.getElementById('dns-save-status');
   statusEl.textContent = "Saving...";
@@ -117,33 +206,33 @@ function saveDnsSettings() {
       setTimeout(function() { statusEl.textContent = ""; }, 5000);
     }
   };
-  xhr.send("csrf_token=" + encodeURIComponent(csrfToken) + "&dns_zones=" + encodeURIComponent(zones) + "&dns_ip=" + encodeURIComponent(ip) + "&dns_bind=" + encodeURIComponent(bind));
+  xhr.send("csrf_token=" + encodeURIComponent(csrfToken) + "&zone_map=" + encodeURIComponent(JSON.stringify(pairs)) + "&dns_bind=" + encodeURIComponent(bind));
 }
+
+renderZoneTable();
 </script>
 
 <div style="margin-bottom: 20px;">
   <strong>DNS Settings</strong>
   <br><br>
   <table>
-    <tr>
-      <td style="padding-right: 15px; vertical-align: top;">Zone Names:</td>
-      <td>
-        <textarea id="dns-zones-input" rows="3" style="width: 300px; font-family: monospace;" placeholder="myserver.local&#10;myserver.lan"><?= htmlspecialchars($dnsZonesDisplay) ?></textarea>
-        <br><span style="color: #888;">One zone per line (or space-separated). Each is served as its own DNS zone pointing to the IP below.</span>
-      </td>
-    </tr>
-    <tr>
-      <td style="padding-right: 15px;">IP Address:</td>
-      <td>
-        <input type="text" id="dns-ip-input" value="<?= htmlspecialchars($dnsIp) ?>" placeholder="e.g. 100.x.x.x or 192.168.1.x" style="width: 300px;">
-        <span style="color: #888; margin-left: 8px;">What *.zone resolves to</span>
-      </td>
-    </tr>
+    <thead>
+      <tr>
+        <th style="text-align: left; padding-right: 10px;">Zone Name</th>
+        <th style="text-align: left; padding-right: 10px;">IP Address</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="zone-rows"></tbody>
+  </table>
+  <button onclick="addZoneRow()" style="margin-top: 6px;">+ Add Zone</button>
+  <br><br>
+  <table>
     <tr>
       <td style="padding-right: 15px;">Bind Address:</td>
       <td>
-        <input type="text" id="dns-bind-input" value="<?= htmlspecialchars($dnsBind) ?>" placeholder="defaults to IP address" style="width: 300px;">
-        <span style="color: #888; margin-left: 8px;">Interface CoreDNS listens on (leave blank to use IP address)</span>
+        <input type="text" id="dns-bind-input" value="<?= htmlspecialchars($dnsBind) ?>" placeholder="defaults to first zone's IP" style="width: 300px;">
+        <span style="color: #888; margin-left: 8px;">Interface CoreDNS listens on (leave blank to use first zone's IP)</span>
       </td>
     </tr>
   </table>

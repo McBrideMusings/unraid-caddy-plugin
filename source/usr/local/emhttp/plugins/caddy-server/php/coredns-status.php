@@ -51,13 +51,38 @@ switch ($action) {
 
         $cfg = parse_ini_file($configFile) ?: [];
 
+        // Parse DNS_ZONE_MAP into structured array
+        $zoneMap = [];
+        $zoneMapRaw = $cfg["DNS_ZONE_MAP"] ?? "";
+        if (!empty($zoneMapRaw)) {
+            foreach (preg_split('/\s+/', trim($zoneMapRaw)) as $entry) {
+                if (strpos($entry, '=') !== false) {
+                    list($z, $i) = explode('=', $entry, 2);
+                    if (!empty($z) && !empty($i)) {
+                        $zoneMap[] = ["zone" => $z, "ip" => $i];
+                    }
+                }
+            }
+        }
+
+        // Fallback: build zone map from legacy DNS_ZONES + DNS_IP
+        if (empty($zoneMap)) {
+            $legacyZones = $cfg["DNS_ZONES"] ?? ($cfg["DNS_ZONE"] ?? "");
+            $legacyIp = $cfg["DNS_IP"] ?? "";
+            if (!empty($legacyZones) && !empty($legacyIp)) {
+                foreach (preg_split('/[\s,]+/', trim($legacyZones)) as $z) {
+                    if (!empty($z)) {
+                        $zoneMap[] = ["zone" => $z, "ip" => $legacyIp];
+                    }
+                }
+            }
+        }
+
         echo json_encode([
             "running" => $running,
             "pid" => $pid,
             "service" => $cfg["COREDNS_SERVICE"] ?? "disable",
-            "dns_zones" => $cfg["DNS_ZONES"] ?? ($cfg["DNS_ZONE"] ?? ""),
-            "dns_zone" => $cfg["DNS_ZONE"] ?? "",
-            "dns_ip" => $cfg["DNS_IP"] ?? "",
+            "zone_map" => $zoneMap,
             "dns_bind" => $cfg["DNS_BIND"] ?? "",
             "log" => $log,
         ]);
@@ -70,54 +95,75 @@ switch ($action) {
             exit;
         }
 
-        $dnsZones = $_POST["dns_zones"] ?? "";
-        $dnsIp = $_POST["dns_ip"] ?? "";
+        $zonesJson = $_POST["zone_map"] ?? "";
         $dnsBind = $_POST["dns_bind"] ?? "";
-        if (empty($dnsZones) && !isset($_POST["dns_zones"])) {
+        if (empty($zonesJson) && !isset($_POST["zone_map"])) {
             parse_str(file_get_contents("php://input"), $rawPost);
-            $dnsZones = $rawPost["dns_zones"] ?? "";
-            $dnsIp = $rawPost["dns_ip"] ?? "";
+            $zonesJson = $rawPost["zone_map"] ?? "";
             $dnsBind = $rawPost["dns_bind"] ?? "";
         }
 
-        // Normalize zones to space-separated single line for cfg storage
-        $dnsZones = trim(preg_replace('/[\s,]+/', ' ', $dnsZones));
-
-        // Validate zone names
-        if (!empty($dnsZones)) {
-            foreach (explode(' ', $dnsZones) as $z) {
-                if (!preg_match('/^[a-zA-Z0-9.-]+$/', $z) || strlen($z) > 255) {
-                    http_response_code(400);
-                    echo json_encode(["error" => "Invalid zone name: " . htmlspecialchars($z)]);
-                    exit;
-                }
+        // Parse zone map JSON array: [{"zone":"x","ip":"y"}, ...]
+        if ($zonesJson === "" || $zonesJson === null) {
+            $pairs = [];
+        } else {
+            $pairs = json_decode($zonesJson, true);
+            if (!is_array($pairs)) {
+                http_response_code(400);
+                echo json_encode(["error" => "Invalid zone map format"]);
+                exit;
             }
         }
 
-        // Read current config, update DNS keys, write back
-        $cfg = file_exists($configFile) ? file_get_contents($configFile) : "";
-
-        // Update or add DNS_ZONES
-        if (preg_match('/^DNS_ZONES=/m', $cfg)) {
-            $cfg = preg_replace('/^DNS_ZONES=.*/m', 'DNS_ZONES="' . addcslashes($dnsZones, '"') . '"', $cfg);
-        } else {
-            $cfg .= "\nDNS_ZONES=\"" . addcslashes($dnsZones, '"') . "\"";
+        // Validate and build DNS_ZONE_MAP string
+        $mapParts = [];
+        foreach ($pairs as $pair) {
+            $z = trim($pair["zone"] ?? "");
+            $i = trim($pair["ip"] ?? "");
+            if (empty($z) && empty($i)) continue;
+            if (empty($z) || empty($i)) {
+                http_response_code(400);
+                echo json_encode(["error" => "Each zone must have both a name and IP address"]);
+                exit;
+            }
+            if (!preg_match('/^[a-zA-Z0-9.-]+$/', $z) || strlen($z) > 255) {
+                http_response_code(400);
+                echo json_encode(["error" => "Invalid zone name: " . htmlspecialchars($z)]);
+                exit;
+            }
+            if (!preg_match('/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/', $i)) {
+                http_response_code(400);
+                echo json_encode(["error" => "Invalid IP address for zone " . htmlspecialchars($z) . ": " . htmlspecialchars($i)]);
+                exit;
+            }
+            $mapParts[] = "{$z}={$i}";
         }
 
-        // Clear legacy DNS_ZONE to avoid stale fallback
+        $zoneMapStr = implode(' ', $mapParts);
+
+        // Read current config, update keys, write back
+        $cfg = file_exists($configFile) ? file_get_contents($configFile) : "";
+
+        // Update or add DNS_ZONE_MAP
+        if (preg_match('/^DNS_ZONE_MAP=/m', $cfg)) {
+            $cfg = preg_replace('/^DNS_ZONE_MAP=.*/m', 'DNS_ZONE_MAP="' . addcslashes($zoneMapStr, '"') . '"', $cfg);
+        } else {
+            $cfg .= "\nDNS_ZONE_MAP=\"" . addcslashes($zoneMapStr, '"') . "\"";
+        }
+
+        // Clear legacy fields so they don't conflict
+        if (preg_match('/^DNS_ZONES=/m', $cfg)) {
+            $cfg = preg_replace('/^DNS_ZONES=.*/m', 'DNS_ZONES=""', $cfg);
+        }
         if (preg_match('/^DNS_ZONE=/m', $cfg)) {
             $cfg = preg_replace('/^DNS_ZONE=.*/m', 'DNS_ZONE=""', $cfg);
         }
-
-        // Update or add DNS_IP
-        if (preg_match('/^DNS_IP=/', $cfg, $m, 0)) {
-            $cfg = preg_replace('/^DNS_IP=.*/m', 'DNS_IP="' . addcslashes($dnsIp, '"') . '"', $cfg);
-        } else {
-            $cfg .= "\nDNS_IP=\"" . addcslashes($dnsIp, '"') . "\"";
+        if (preg_match('/^DNS_IP=/m', $cfg)) {
+            $cfg = preg_replace('/^DNS_IP=.*/m', 'DNS_IP=""', $cfg);
         }
 
         // Update or add DNS_BIND
-        if (preg_match('/^DNS_BIND=/', $cfg, $m, 0)) {
+        if (preg_match('/^DNS_BIND=/m', $cfg)) {
             $cfg = preg_replace('/^DNS_BIND=.*/m', 'DNS_BIND="' . addcslashes($dnsBind, '"') . '"', $cfg);
         } else {
             $cfg .= "\nDNS_BIND=\"" . addcslashes($dnsBind, '"') . "\"";

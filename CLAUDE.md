@@ -40,6 +40,24 @@ make          # builds all .txz packages into build/
 make clean    # removes build artifacts
 ```
 
+## CoreDNS configuration
+
+Config lives in `/boot/config/plugins/caddy-server/caddy-server.cfg`. Per-zone IP mapping uses `DNS_ZONE_MAP`:
+
+```
+DNS_ZONE_MAP="piercetower.local=100.114.249.118 piercetower.lan=100.114.249.118 piercemac.lan=100.94.40.126"
+DNS_BIND="100.114.249.118"
+```
+
+- Each `zone=ip` pair gives that zone its own A record IP
+- `DNS_BIND` is the global listen address (defaults to first zone's IP if empty)
+- Legacy `DNS_ZONES` + `DNS_IP` format still works as fallback (single IP for all zones)
+- Saving from the UI migrates to the new format automatically
+
+`source/usr/local/emhttp/plugins/caddy-server/php/coredns-status.php` handles CoreDNS API actions via `?action=`:
+- `status` — service status, parsed zone map, log tail
+- `save_settings` — accepts JSON zone/IP pairs, writes `DNS_ZONE_MAP`
+
 ## PHP backend
 
 `source/usr/local/emhttp/plugins/caddy-server/php/status.php` handles all API actions via `?action=`:
