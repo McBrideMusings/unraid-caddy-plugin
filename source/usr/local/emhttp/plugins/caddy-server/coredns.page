@@ -12,7 +12,9 @@ $runDir = "/var/run/coredns";
 
 $cfg = parse_ini_file($configFile) ?: [];
 $corednsService = $cfg["COREDNS_SERVICE"] ?? "disable";
-$dnsZone = $cfg["DNS_ZONE"] ?? "";
+$dnsZones = $cfg["DNS_ZONES"] ?? ($cfg["DNS_ZONE"] ?? "");
+// Normalize: display one zone per line
+$dnsZonesDisplay = trim(preg_replace('/[\s,]+/', "\n", $dnsZones));
 $dnsIp = $cfg["DNS_IP"] ?? "";
 $dnsBind = $cfg["DNS_BIND"] ?? "";
 
@@ -24,11 +26,14 @@ if (file_exists($pidFile)) {
     }
 }
 
-// Read generated zone file if it exists
-$zoneContent = "";
-$zoneFile = "{$runDir}/db.zone";
-if (file_exists($zoneFile)) {
-    $zoneContent = file_get_contents($zoneFile);
+// Read all generated zone files
+$zoneFiles = [];
+foreach (glob("{$runDir}/db.*.zone") ?: [] as $zf) {
+    $zoneFiles[basename($zf)] = file_get_contents($zf);
+}
+// Legacy single-file fallback
+if (empty($zoneFiles) && file_exists("{$runDir}/db.zone")) {
+    $zoneFiles["db.zone"] = file_get_contents("{$runDir}/db.zone");
 }
 
 $csrf = _var($var,'csrf_token');
@@ -88,7 +93,7 @@ $csrf = _var($var,'csrf_token');
 var csrfToken = csrf_token;
 
 function saveDnsSettings() {
-  var zone = document.getElementById('dns-zone-input').value;
+  var zones = document.getElementById('dns-zones-input').value;
   var ip = document.getElementById('dns-ip-input').value;
   var bind = document.getElementById('dns-bind-input').value;
   var statusEl = document.getElementById('dns-save-status');
@@ -112,7 +117,7 @@ function saveDnsSettings() {
       setTimeout(function() { statusEl.textContent = ""; }, 5000);
     }
   };
-  xhr.send("csrf_token=" + encodeURIComponent(csrfToken) + "&dns_zone=" + encodeURIComponent(zone) + "&dns_ip=" + encodeURIComponent(ip) + "&dns_bind=" + encodeURIComponent(bind));
+  xhr.send("csrf_token=" + encodeURIComponent(csrfToken) + "&dns_zones=" + encodeURIComponent(zones) + "&dns_ip=" + encodeURIComponent(ip) + "&dns_bind=" + encodeURIComponent(bind));
 }
 </script>
 
@@ -121,9 +126,10 @@ function saveDnsSettings() {
   <br><br>
   <table>
     <tr>
-      <td style="padding-right: 15px;">Zone Name:</td>
+      <td style="padding-right: 15px; vertical-align: top;">Zone Names:</td>
       <td>
-        <input type="text" id="dns-zone-input" value="<?= htmlspecialchars($dnsZone) ?>" placeholder="e.g. myserver.local" style="width: 300px;">
+        <textarea id="dns-zones-input" rows="3" style="width: 300px; font-family: monospace;" placeholder="myserver.local&#10;myserver.lan"><?= htmlspecialchars($dnsZonesDisplay) ?></textarea>
+        <br><span style="color: #888;">One zone per line (or space-separated). Each is served as its own DNS zone pointing to the IP below.</span>
       </td>
     </tr>
     <tr>
@@ -146,11 +152,14 @@ function saveDnsSettings() {
   <span id="dns-save-status" style="margin-left: 8px;"></span>
 </div>
 
-<?php if ($zoneContent): ?>
+<?php if (!empty($zoneFiles)): ?>
 <div style="margin-bottom: 20px;">
-  <strong>Generated Zone File</strong>
+  <strong>Generated Zone Files</strong>
   <br><br>
-  <pre id="coredns-zone-preview"><?= htmlspecialchars($zoneContent) ?></pre>
+  <?php foreach ($zoneFiles as $name => $content): ?>
+    <div style="color: #888; font-family: monospace; margin-top: 8px;"><?= htmlspecialchars($name) ?></div>
+    <pre class="coredns-zone-preview" style="font-family: monospace; font-size: 12px; white-space: pre-wrap; background: #1a1a2e; color: #e0e0e0; padding: 10px;"><?= htmlspecialchars($content) ?></pre>
+  <?php endforeach; ?>
 </div>
 <?php endif; ?>
 

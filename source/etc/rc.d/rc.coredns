@@ -29,12 +29,16 @@ coredns_running() {
 }
 
 generate_config() {
-  local zone="${DNS_ZONE}"
+  local zones_raw="${DNS_ZONES:-$DNS_ZONE}"
   local ip="${DNS_IP}"
   local bind_addr="${DNS_BIND:-$ip}"
 
-  if [ -z "$zone" ]; then
-    echo "ERROR: DNS_ZONE is not set. Configure it in the CoreDNS settings page."
+  # Normalize newlines/commas to spaces so textarea input works
+  local zones
+  zones=$(echo "$zones_raw" | tr '\n,' '  ' | xargs)
+
+  if [ -z "$zones" ]; then
+    echo "ERROR: DNS_ZONES/DNS_ZONE is not set. Configure it in the CoreDNS settings page."
     return 1
   fi
 
@@ -45,11 +49,21 @@ generate_config() {
 
   mkdir -p "$RUNDIR"
 
+  # Clean up stale zone files from previous runs
+  rm -f "${RUNDIR}"/db.*.zone "${RUNDIR}/db.zone"
+
   local serial
   serial=$(date +%s)
 
-  # Generate zone file
-  cat > "${RUNDIR}/db.zone" <<ZONEEOF
+  : > "${RUNDIR}/Corefile"
+
+  local zone
+  for zone in $zones; do
+    if ! echo "$zone" | grep -qE '^[a-zA-Z0-9.-]+$'; then
+      echo "ERROR: Invalid zone name: ${zone}"
+      return 1
+    fi
+    cat > "${RUNDIR}/db.${zone}.zone" <<ZONEEOF
 \$TTL 300
 @  IN SOA ns.${zone}. admin.${zone}. ${serial} 3600 900 604800 300
 @  IN NS  ns.${zone}.
@@ -58,16 +72,17 @@ generate_config() {
 ns IN A   ${ip}
 ZONEEOF
 
-  # Generate Corefile — bind to specific address to avoid conflicts with other DNS services
-  cat > "${RUNDIR}/Corefile" <<COREEOF
+    cat >> "${RUNDIR}/Corefile" <<COREEOF
 ${zone}:53 {
     bind ${bind_addr}
-    file ${RUNDIR}/db.zone
+    file ${RUNDIR}/db.${zone}.zone
     log
 }
-COREEOF
 
-  echo "Generated CoreDNS config for ${zone} -> ${ip} (listening on ${bind_addr})"
+COREEOF
+  done
+
+  echo "Generated CoreDNS config for zones: ${zones} -> ${ip} (listening on ${bind_addr})"
 }
 
 start() {
