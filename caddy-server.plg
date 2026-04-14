@@ -13,9 +13,9 @@
   <!ENTITY coredns_ver "1.12.1">
   <!ENTITY coredns_pkg "coredns-&coredns_ver;-x86_64-1.txz">
   <!ENTITY plugin_pkg  "&name;-&version;-x86_64-1.txz">
-  <!ENTITY caddy_md5   "1668109548db4074cba4173c03b8ef88">
-  <!ENTITY coredns_md5 "de43eed5cc3b090918f78277bb197b3f">
-  <!ENTITY plugin_md5  "8b054146d5ec219111578d86fc8e8feb">
+  <!ENTITY caddy_md5   "96593854ceaa08bedf226d1368b4671e">
+  <!ENTITY coredns_md5 "d083c9ef6627309d55c200323022d624">
+  <!ENTITY plugin_md5  "39796c6328dc8a79fdf530ceeb0db82b">
 ]>
 
 <PLUGIN  name="&name;"
