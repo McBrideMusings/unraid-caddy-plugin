@@ -8,7 +8,7 @@ PLUGIN_NAME="caddy-server"
 CONFIG_FILE="/boot/config/plugins/${PLUGIN_NAME}/${PLUGIN_NAME}.cfg"
 LOGFILE="/var/log/caddy-plugin.log"
 STATE_DIR="/var/run/${PLUGIN_NAME}-watchdog"
-MAX_FAILS=3
+MAX_FAILS=10
 SUPPRESS_WINDOW=3600
 
 [ -f "$CONFIG_FILE" ] && source "$CONFIG_FILE"

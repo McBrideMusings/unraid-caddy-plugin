@@ -16,6 +16,39 @@ if [ -f "$CONFIG_FILE" ]; then
   source "$CONFIG_FILE"
 fi
 
+# Boot-time race guard — see rc.caddy for rationale. CoreDNS binds to DNS_BIND
+# (typically a Tailscale IP) which may not exist yet when driver_loaded fires.
+BIND_WAIT_TIMEOUT="${BIND_WAIT_TIMEOUT:-180}"
+BIND_WAIT_INTERVAL="${BIND_WAIT_INTERVAL:-2}"
+PLUGIN_LOG="/var/log/caddy-plugin.log"
+
+ip_exists_locally() {
+  local target="$1" addrs
+  addrs=$(ip -o addr show 2>/dev/null | awk '{print $4}' | cut -d/ -f1)
+  echo "$addrs" | grep -qxF "$target"
+}
+
+wait_for_ips() {
+  local ips="$1"
+  [ -z "$ips" ] && return 0
+
+  local deadline ip missing now
+  deadline=$(( $(date +%s) + BIND_WAIT_TIMEOUT ))
+  while :; do
+    missing=""
+    for ip in $ips; do
+      ip_exists_locally "$ip" || missing="$missing $ip"
+    done
+    [ -z "$missing" ] && return 0
+    now=$(date +%s)
+    if [ "$now" -ge "$deadline" ]; then
+      echo "[$(date '+%F %T')] rc.coredns: wait_for_ips timed out after ${BIND_WAIT_TIMEOUT}s; missing:${missing}" >> "$PLUGIN_LOG"
+      return 1
+    fi
+    sleep "$BIND_WAIT_INTERVAL"
+  done
+}
+
 coredns_running() {
   if [ -f "$PIDFILE" ]; then
     local pid
@@ -139,6 +172,13 @@ start() {
   fi
 
   if ! generate_config; then
+    return 1
+  fi
+
+  local needed_ips
+  needed_ips=$(awk '$1=="bind" && NF>=2 { print $2 }' "${RUNDIR}/Corefile" | sort -u)
+  if ! wait_for_ips "$needed_ips"; then
+    echo "Refusing to start CoreDNS: configured bind IPs never appeared. See ${PLUGIN_LOG}."
     return 1
   fi
 

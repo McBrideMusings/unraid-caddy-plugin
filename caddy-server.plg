@@ -3,7 +3,7 @@
 <!DOCTYPE PLUGIN [
   <!ENTITY name        "caddy-server">
   <!ENTITY author      "McBrideMusings">
-  <!ENTITY version     "2026.04.14">
+  <!ENTITY version     "2026.04.15">
   <!ENTITY caddy_ver   "2.9.1">
   <!ENTITY launch      "Settings/CaddyServer">
   <!ENTITY gitURL      "https://raw.githubusercontent.com/McBrideMusings/unraid-caddy-plugin/main">
@@ -29,6 +29,10 @@
 ##&name;
 
 ###&version;
+- Wait for configured bind IPs to appear on a local interface before starting Caddy and CoreDNS, so boot no longer races against Tailscale bringing up its IP
+- Raise watchdog MAX_FAILS from 3 to 10 as a second line of defense for slow-booting interfaces
+
+###2026.04.14
 - Add watchdog cron that restarts enabled services if they die, with bounded backoff
 - Log boot start attempts and watchdog events to /var/log/caddy-plugin.log
 - Support flash-resident overrides in /boot/config/plugins/caddy-server/override/ so corrected rc scripts can be applied without rebuilding the plugin

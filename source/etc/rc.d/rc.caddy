@@ -24,6 +24,48 @@ fi
 
 CADDYFILE="${CONFIG_DIR}/Caddyfile"
 
+# Boot-time race guard: if the Caddyfile binds to IPs that don't exist on any
+# local interface yet (e.g. tailscale1 still coming up during post-boot), `caddy
+# run` fails with "bind: cannot assign requested address" and exits. Wait for
+# the configured IPs to appear before starting. Bounded by BIND_WAIT_TIMEOUT so
+# a misconfigured IP can't hang boot forever — the watchdog + log will surface it.
+BIND_WAIT_TIMEOUT="${BIND_WAIT_TIMEOUT:-180}"
+BIND_WAIT_INTERVAL="${BIND_WAIT_INTERVAL:-2}"
+PLUGIN_LOG="/var/log/caddy-plugin.log"
+
+extract_bind_ips() {
+  [ -f "$CADDYFILE" ] || return 0
+  awk '$1=="bind" && NF>=2 { print $2 }' "$CADDYFILE" | sort -u
+}
+
+ip_exists_locally() {
+  local target="$1" addrs
+  addrs=$(ip -o addr show 2>/dev/null | awk '{print $4}' | cut -d/ -f1)
+  echo "$addrs" | grep -qxF "$target"
+}
+
+wait_for_bind_ips() {
+  local ips
+  ips=$(extract_bind_ips)
+  [ -z "$ips" ] && return 0
+
+  local deadline ip missing now
+  deadline=$(( $(date +%s) + BIND_WAIT_TIMEOUT ))
+  while :; do
+    missing=""
+    for ip in $ips; do
+      ip_exists_locally "$ip" || missing="$missing $ip"
+    done
+    [ -z "$missing" ] && return 0
+    now=$(date +%s)
+    if [ "$now" -ge "$deadline" ]; then
+      echo "[$(date '+%F %T')] rc.caddy: wait_for_bind_ips timed out after ${BIND_WAIT_TIMEOUT}s; missing:${missing}" >> "$PLUGIN_LOG"
+      return 1
+    fi
+    sleep "$BIND_WAIT_INTERVAL"
+  done
+}
+
 ensure_data_home() {
   if [ ! -d "$CADDY_DATA_HOME" ]; then
     mkdir -p "$CADDY_DATA_HOME"
@@ -67,6 +109,11 @@ start() {
 
   ensure_data_home
   export XDG_DATA_HOME="$CADDY_DATA_HOME"
+
+  if ! wait_for_bind_ips; then
+    echo "Refusing to start Caddy: configured bind IPs never appeared. See ${PLUGIN_LOG}."
+    return 1
+  fi
 
   echo "Starting Caddy..."
   "$CADDY_BIN" run --config "$CADDYFILE" --pidfile "$PIDFILE" >> "$LOGFILE" 2>&1 &
