@@ -10,12 +10,31 @@ CADDY_BIN="/usr/local/bin/caddy"
 PIDFILE="/var/run/caddy.pid"
 LOGFILE="/var/log/caddy.log"
 
+# Persist Caddy's data dir (PKI root CA + key, ACME state) on flash so the
+# internal root CA survives reboots. Without this, /root/.local/share is
+# ephemeral tmpfs and the root CA is regenerated on every boot, forcing
+# every trusted device to be re-trusted.
+CADDY_DATA_HOME="${CONFIG_DIR}/data"
+CA_CERT_FILE="${CADDY_DATA_HOME}/caddy/pki/authorities/local/root.crt"
+
 # Source config
 if [ -f "$CONFIG_FILE" ]; then
   source "$CONFIG_FILE"
 fi
 
 CADDYFILE="${CONFIG_DIR}/Caddyfile"
+
+ensure_data_home() {
+  if [ ! -d "$CADDY_DATA_HOME" ]; then
+    mkdir -p "$CADDY_DATA_HOME"
+    # First-run migration: if a CA was already bootstrapped in the default
+    # tmpfs location, move it to the persistent dir so it isn't lost.
+    if [ -d /root/.local/share/caddy ]; then
+      cp -a /root/.local/share/caddy "$CADDY_DATA_HOME/caddy"
+    fi
+  fi
+  chmod 700 "$CADDY_DATA_HOME"
+}
 
 caddy_running() {
   if [ -f "$PIDFILE" ]; then
@@ -46,17 +65,21 @@ start() {
     return 1
   fi
 
+  ensure_data_home
+  export XDG_DATA_HOME="$CADDY_DATA_HOME"
+
   echo "Starting Caddy..."
   "$CADDY_BIN" run --config "$CADDYFILE" --pidfile "$PIDFILE" >> "$LOGFILE" 2>&1 &
   sleep 1
 
   if caddy_running; then
     echo "Caddy started successfully."
-    # Copy root CA cert to web-accessible location for easy download
-    local ca_cert="/root/.local/share/caddy/pki/authorities/local/root.crt"
+    # Publish root CA cert to web-accessible location for easy download
     local web_cert="/usr/local/emhttp/plugins/${PLUGIN_NAME}/caddy-root-ca.crt"
-    if [ -f "$ca_cert" ]; then
-      cp "$ca_cert" "$web_cert"
+    local flash_cert="${CONFIG_DIR}/caddy-root-ca.crt"
+    if [ -f "$CA_CERT_FILE" ]; then
+      cp "$CA_CERT_FILE" "$web_cert"
+      cp "$CA_CERT_FILE" "$flash_cert"
     fi
   else
     echo "Failed to start Caddy. Check ${LOGFILE} for details."
