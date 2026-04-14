@@ -7,7 +7,9 @@ Unraid plugin (.plg) that installs Caddy and CoreDNS as managed services on Unra
 - `caddy-server.plg` — plugin manifest: declares packages, post-install setup, removal script
 - `source/` — files installed on the server (mirrored to `/` on Unraid)
   - `usr/local/emhttp/plugins/caddy-server/` — UI pages (.page), PHP backend, default config
-  - `etc/rc.d/rc.caddy`, `rc.coredns` — service start/stop scripts
+  - `usr/local/emhttp/plugins/caddy-server/event/driver_loaded` — boot hook; syncs flash overrides and starts services
+  - `usr/local/emhttp/plugins/caddy-server/scripts/caddy-watchdog` — cron-driven supervisor; restarts dead services with bounded backoff
+  - `etc/rc.d/rc.caddy`, `rc.coredns` — service start/stop scripts (`status` exits 0 if running, 1 if not)
   - `etc/logrotate.d/caddy-plugin` — logrotate config for plugin log
 - `Makefile` — builds .txz packages for release
 
@@ -16,16 +18,27 @@ Unraid plugin (.plg) that installs Caddy and CoreDNS as managed services on Unra
 | Path | Purpose |
 |------|---------|
 | `/boot/config/plugins/caddy-server/` | Persistent config (survives reboot) |
+| `/boot/config/plugins/caddy-server/override/` | Drop a replacement `rc.caddy` or `rc.coredns` here to hot-patch without a release — applied by `driver_loaded` on boot |
 | `/usr/local/emhttp/plugins/caddy-server/` | Plugin UI and backend |
+| `/usr/local/emhttp/plugins/caddy-server/scripts/caddy-watchdog` | Watchdog (runs every minute via cron) |
+| `/var/run/caddy-server-watchdog/` | Watchdog failure counters (delete `<svc>.fails` to reset backoff) |
 | `/usr/local/bin/caddy` | Caddy binary |
 | `/var/log/caddy.log` | Caddy runtime log |
-| `/var/log/caddy-plugin.log` | Plugin operations log (download, install, restore) |
+| `/var/log/caddy-plugin.log` | Plugin operations log (boot, watchdog, download, install, restore) |
 | `/etc/logrotate.d/caddy-plugin` | Logrotate config for plugin log |
 
 ## Logging
 
 - **Caddy runtime log:** `/var/log/caddy.log` — managed by Caddy itself
-- **Plugin operations log:** `/var/log/caddy-plugin.log` — written by status.php for download/install/restore actions. Rotated via logrotate (256k, 2 rotations, compressed).
+- **Plugin operations log:** `/var/log/caddy-plugin.log` — written by `driver_loaded` (boot), `caddy-watchdog` (supervision), and `status.php` (download/install/restore). Rotated via logrotate (256k, 2 rotations, compressed). Grep for `RESTART`, `RECOVERED`, `FAILED`, `SUPPRESSED`, `OVERRIDE` to investigate.
+
+## Supervision and self-healing
+
+`driver_loaded` runs once post-boot; it syncs `/boot/config/plugins/caddy-server/override/rc.*` onto `/etc/rc.d/` (letting users hot-patch rc scripts without rebuilding the plugin), then starts both services.
+
+`caddy-watchdog` runs every minute via `/var/spool/cron/crontabs/root`. For each enabled service (`SERVICE`, `COREDNS_SERVICE`), it calls `rc.X status`; if the service is down, it calls `rc.X start` up to `MAX_FAILS=3` consecutive times. After that it stops retrying and logs `SUPPRESSED` at most once an hour. Recovery clears the counter. To manually retry a suppressed service, delete `/var/run/caddy-server-watchdog/<name>.fails`.
+
+The cron entry and override dir are installed by `source/install/doinst.sh`. Removing the plugin strips the cron entry (see `caddy-server.plg` `Method="remove"`).
 
 ## Development
 

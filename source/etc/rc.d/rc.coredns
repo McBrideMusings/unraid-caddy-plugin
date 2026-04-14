@@ -196,8 +196,10 @@ status() {
     local pid
     pid=$(cat "$PIDFILE" 2>/dev/null)
     echo "CoreDNS is running (PID: ${pid})."
+    return 0
   else
     echo "CoreDNS is not running."
+    return 1
   fi
 }
 

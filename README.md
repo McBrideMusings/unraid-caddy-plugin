@@ -21,6 +21,8 @@ This installs three packages: Caddy, CoreDNS, and the plugin UI.
 - **Network interfaces panel** — detect available interfaces with copy-to-clipboard for `bind` directives
 - **Live log viewer** and **Caddyfile editor** in the Unraid UI
 - **Boots before the array** — reverse proxy is available even when Docker containers are still starting
+- **Self-healing** — a watchdog cron restarts either service within ~1 minute if it dies, with bounded backoff so a permanently broken service won't loop forever
+- **Hot-patch without release** — drop a corrected `rc.caddy` or `rc.coredns` into `/boot/config/plugins/caddy-server/override/` and it's applied on next boot
 
 ## Caddy Setup
 
@@ -103,7 +105,7 @@ Config is preserved across plugin updates and removals.
      └──────────────┘ └──────────────┘
 ```
 
-Both services run as native processes (not in Docker), managed by rc scripts. The `event/driver_loaded` hook starts them at boot before the array.
+Both services run as native processes (not in Docker), managed by rc scripts. The `event/driver_loaded` hook starts them at boot before the array and applies any flash-resident overrides from `/boot/config/plugins/caddy-server/override/`. A `caddy-watchdog` cron runs every minute to restart either service if it dies, with bounded backoff (3 consecutive failures, then suppressed until manually cleared or the service recovers).
 
 ## Development
 
@@ -145,13 +147,14 @@ source/
 │   ├── rc.caddy                         # Caddy service control
 │   └── rc.coredns                       # CoreDNS service control
 ├── install/
-│   ├── doinst.sh                        # Post-install setup
+│   ├── doinst.sh                        # Post-install setup (wires watchdog cron)
 │   └── slack-desc                       # Package metadata
 └── usr/local/emhttp/plugins/caddy-server/
     ├── caddy-server.page                # Caddy UI
     ├── coredns.page                     # CoreDNS UI
     ├── default.cfg                      # Default config template
-    ├── event/driver_loaded              # Boot hook
+    ├── event/driver_loaded              # Boot hook (applies flash overrides, starts services)
+    ├── scripts/caddy-watchdog           # Per-minute supervisor
     └── php/
         ├── status.php                   # Caddy API
         └── coredns-status.php           # CoreDNS API

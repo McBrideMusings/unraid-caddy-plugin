@@ -119,8 +119,10 @@ status() {
     local pid
     pid=$(cat "$PIDFILE" 2>/dev/null)
     echo "Caddy is running (PID: ${pid})."
+    return 0
   else
     echo "Caddy is not running."
+    return 1
   fi
 }
 

@@ -1,3 +1,36 @@
 #!/bin/bash
-/etc/rc.d/rc.caddy start
-/etc/rc.d/rc.coredns start
+#
+# driver_loaded - fired by Unraid after plugin driver loads (post-boot).
+# Syncs flash-resident overrides onto /etc/rc.d, then starts services.
+# Watchdog cron will retry any service that fails here.
+#
+
+PLUGIN_NAME="caddy-server"
+OVERRIDE_DIR="/boot/config/plugins/${PLUGIN_NAME}/override"
+LOGFILE="/var/log/caddy-plugin.log"
+
+log() {
+  echo "[$(date '+%F %T')] boot: $*" >> "$LOGFILE"
+}
+
+# Apply flash-resident overrides for /etc/rc.d/rc.* before starting services.
+# Lets users patch a broken rc script without cutting a plugin release:
+# drop a corrected rc.caddy or rc.coredns into $OVERRIDE_DIR, reboot (or
+# re-run this event), and it takes effect.
+if [ -d "$OVERRIDE_DIR" ]; then
+  for src in "$OVERRIDE_DIR"/rc.*; do
+    [ -f "$src" ] || continue
+    name=$(basename "$src")
+    if cp "$src" "/etc/rc.d/$name" && chmod 755 "/etc/rc.d/$name"; then
+      log "OVERRIDE: applied $name from flash"
+    else
+      log "OVERRIDE_FAILED: could not apply $name"
+    fi
+  done
+fi
+
+log "starting caddy"
+/etc/rc.d/rc.caddy start >> "$LOGFILE" 2>&1
+log "starting coredns"
+/etc/rc.d/rc.coredns start >> "$LOGFILE" 2>&1
+log "boot sequence complete (watchdog will retry any failed services)"

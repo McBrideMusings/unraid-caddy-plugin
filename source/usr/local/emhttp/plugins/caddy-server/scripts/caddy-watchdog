@@ -1,0 +1,60 @@
+#!/bin/bash
+#
+# caddy-watchdog - restart enabled services if they've died, with bounded backoff.
+# Intended to run every minute via cron. Safe to invoke manually.
+#
+
+PLUGIN_NAME="caddy-server"
+CONFIG_FILE="/boot/config/plugins/${PLUGIN_NAME}/${PLUGIN_NAME}.cfg"
+LOGFILE="/var/log/caddy-plugin.log"
+STATE_DIR="/var/run/${PLUGIN_NAME}-watchdog"
+MAX_FAILS=3
+SUPPRESS_WINDOW=3600
+
+[ -f "$CONFIG_FILE" ] && source "$CONFIG_FILE"
+mkdir -p "$STATE_DIR"
+
+log() {
+  echo "[$(date '+%F %T')] watchdog: $*" >> "$LOGFILE"
+}
+
+check() {
+  local name="$1" rc="$2" enabled="$3"
+  [ "$enabled" = "enable" ] || return 0
+
+  if "$rc" status >/dev/null 2>&1; then
+    if [ -f "$STATE_DIR/$name.fails" ]; then
+      log "RECOVERED: $name is healthy again"
+      rm -f "$STATE_DIR/$name.fails" "$STATE_DIR/$name.suppressed"
+    fi
+    return 0
+  fi
+
+  local fails=0
+  [ -f "$STATE_DIR/$name.fails" ] && fails=$(cat "$STATE_DIR/$name.fails" 2>/dev/null || echo 0)
+
+  if [ "$fails" -ge "$MAX_FAILS" ]; then
+    local stamp="$STATE_DIR/$name.suppressed"
+    local now last
+    now=$(date +%s)
+    last=0
+    [ -f "$stamp" ] && last=$(stat -c %Y "$stamp" 2>/dev/null || echo 0)
+    if [ $((now - last)) -gt "$SUPPRESS_WINDOW" ]; then
+      log "SUPPRESSED: $name still down after $fails attempts; delete $STATE_DIR/$name.fails to retry"
+      touch "$stamp"
+    fi
+    return 1
+  fi
+
+  log "RESTART: $name not running, attempt $((fails + 1))/$MAX_FAILS"
+  if "$rc" start >> "$LOGFILE" 2>&1 && "$rc" status >/dev/null 2>&1; then
+    log "RECOVERED: $name started"
+    rm -f "$STATE_DIR/$name.fails" "$STATE_DIR/$name.suppressed"
+  else
+    echo $((fails + 1)) > "$STATE_DIR/$name.fails"
+    log "FAILED: $name did not start (failure $((fails + 1))/$MAX_FAILS)"
+  fi
+}
+
+check caddy   /etc/rc.d/rc.caddy   "$SERVICE"
+check coredns /etc/rc.d/rc.coredns "$COREDNS_SERVICE"
