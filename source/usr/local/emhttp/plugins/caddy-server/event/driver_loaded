@@ -6,7 +6,9 @@
 #
 
 PLUGIN_NAME="caddy-server"
-OVERRIDE_DIR="/boot/config/plugins/${PLUGIN_NAME}/override"
+PLUGIN_DIR="/boot/config/plugins/${PLUGIN_NAME}"
+OVERRIDE_DIR="${PLUGIN_DIR}/override"
+CUSTOM_BIN="${PLUGIN_DIR}/caddy.custom"
 LOGFILE="/var/log/caddy-plugin.log"
 
 log() {
@@ -27,6 +29,19 @@ if [ -d "$OVERRIDE_DIR" ]; then
       log "OVERRIDE_FAILED: could not apply $name"
     fi
   done
+fi
+
+# Restore a custom Caddy build (with extra modules) if one was previously
+# installed via the UI. The bundled .txz reinstalls the stock binary at
+# /usr/local/bin/caddy on every boot, so without this step a user who built
+# Caddy with extra DNS providers / plugins would lose them on reboot and
+# Caddy would fail to start if their Caddyfile references those modules.
+if [ -f "$CUSTOM_BIN" ]; then
+  if cp "$CUSTOM_BIN" /usr/local/bin/caddy && chmod 755 /usr/local/bin/caddy; then
+    log "CUSTOM_BIN: restored custom Caddy build from flash ($(stat -c%s "$CUSTOM_BIN") bytes)"
+  else
+    log "CUSTOM_BIN_FAILED: could not restore custom Caddy build"
+  fi
 fi
 
 log "starting caddy"

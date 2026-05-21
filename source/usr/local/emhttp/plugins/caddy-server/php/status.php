@@ -411,6 +411,21 @@ switch ($action) {
             }
         }
 
+        // Persist the custom binary to flash so it survives reboot. The plugin's
+        // bundled .txz reinstalls a stock Caddy at /usr/local/bin/caddy on every
+        // boot; driver_loaded copies this flash-resident binary back into place
+        // before starting services. Without this, a custom build with extra
+        // modules silently reverts on the next reboot and Caddy fails to start
+        // if the Caddyfile references those modules.
+        $persistBin = "/boot/config/plugins/caddy-server/caddy.custom";
+        if (@copy($caddyBin, $persistBin)) {
+            @chmod($persistBin, 0755);
+            pluginLog("install_caddy: persisted custom binary to flash ({$persistBin})");
+        } else {
+            $err = error_get_last();
+            pluginLog("install_caddy: WARNING — could not persist binary to flash: " . ($err["message"] ?? "unknown") . " (custom build will be lost on reboot)");
+        }
+
         $newVersion = trim(shell_exec("{$caddyBin} version 2>/dev/null") ?: "unknown");
         pluginLog("install_caddy: success — version {$newVersion}, healthy={$healthy}");
 
@@ -474,6 +489,14 @@ switch ($action) {
         }
         unlink($bakFile);
         chmod($caddyBin, 0755);
+
+        // Drop the flash-persisted custom binary too, otherwise driver_loaded
+        // will copy it back over the restored stock binary on next reboot.
+        $persistBin = "/boot/config/plugins/caddy-server/caddy.custom";
+        if (file_exists($persistBin)) {
+            @unlink($persistBin);
+            pluginLog("restore_caddy: removed flash-persisted custom binary");
+        }
 
         // Clear CADDY_MODULES in config
         $cfg = parse_ini_file($configFile) ?: [];

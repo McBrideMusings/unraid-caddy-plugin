@@ -21,6 +21,7 @@ Unraid plugin (.plg) that installs Caddy and CoreDNS as managed services on Unra
 | `/boot/config/plugins/caddy-server/data/` | Caddy `XDG_DATA_HOME` — root CA, intermediate, leaf certs, ACME state. Persists across reboots so trusted devices stay trusted. |
 | `/boot/config/plugins/caddy-server/caddy-root-ca.crt` | Flash-side copy of the current root CA (republished each start) for out-of-band download |
 | `/boot/config/plugins/caddy-server/override/` | Drop a replacement `rc.caddy` or `rc.coredns` here to hot-patch without a release — applied by `driver_loaded` on boot |
+| `/boot/config/plugins/caddy-server/caddy.custom` | Flash-persisted Caddy binary (written by `install_caddy` after a successful custom build). `driver_loaded` copies it over `/usr/local/bin/caddy` on boot so custom modules survive the package re-install. `restore_caddy` removes it on rollback. |
 | `/usr/local/emhttp/plugins/caddy-server/` | Plugin UI and backend |
 | `/usr/local/emhttp/plugins/caddy-server/scripts/caddy-watchdog` | Watchdog (runs every minute via cron) |
 | `/var/run/caddy-server-watchdog/` | Watchdog failure counters (delete `<svc>.fails` to reset backoff) |
