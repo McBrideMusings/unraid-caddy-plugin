@@ -3,7 +3,7 @@
 <!DOCTYPE PLUGIN [
   <!ENTITY name        "caddy-server">
   <!ENTITY author      "McBrideMusings">
-  <!ENTITY version     "2026.04.15">
+  <!ENTITY version     "2026.05.21">
   <!ENTITY caddy_ver   "2.9.1">
   <!ENTITY launch      "Settings/CaddyServer">
   <!ENTITY gitURL      "https://raw.githubusercontent.com/McBrideMusings/unraid-caddy-plugin/main">
@@ -13,9 +13,9 @@
   <!ENTITY coredns_ver "1.12.1">
   <!ENTITY coredns_pkg "coredns-&coredns_ver;-x86_64-1.txz">
   <!ENTITY plugin_pkg  "&name;-&version;-x86_64-1.txz">
-  <!ENTITY caddy_md5   "96593854ceaa08bedf226d1368b4671e">
-  <!ENTITY coredns_md5 "d083c9ef6627309d55c200323022d624">
-  <!ENTITY plugin_md5  "39796c6328dc8a79fdf530ceeb0db82b">
+  <!ENTITY caddy_md5   "7424ab753fa395003d3f82db0103a911">
+  <!ENTITY coredns_md5 "025d0ffd95af16b51dee47b1b76a9e06">
+  <!ENTITY plugin_md5  "d7247a50bc564f85827bf8976fb7bdfc">
 ]>
 
 <PLUGIN  name="&name;"
