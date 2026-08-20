@@ -4,4 +4,4 @@ CLAUDE.local.md
 *.local.*
 
 # Local verify rig — machine-specific, never committed
-.claude/skills/verify/
+.claude/skills/verify-project/
