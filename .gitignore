@@ -5,3 +5,9 @@ CLAUDE.local.md
 
 # Local verify rig — machine-specific, never committed
 .claude/skills/verify-project/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/

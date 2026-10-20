@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "unraid_caddy_plugin",
+  "project_id": "c25bf43e-9ccf-45ee-ad8b-8f0000a8c724"
+}
