@@ -1,0 +1,17 @@
+# Every bead carries at least one of these.
+required = ["caddy", "coredns", "plugin"]
+
+[labels.caddy]
+about = "The Caddy service: rc.caddy, the Caddy page, status.php, custom builds."
+
+[labels.coredns]
+about = "The CoreDNS service: rc.coredns, the CoreDNS page, coredns-status.php."
+
+[labels.plugin]
+about = "Packaging and lifecycle: the .plg, doinst.sh, driver_loaded, watchdog, log rotation, release workflow."
+
+[labels.security]
+about = "Something someone could exploit: injection, auth, CSRF, file permissions."
+
+[labels.human]
+about = "Needs a person: a decision, hardware, an account, a manual check."
