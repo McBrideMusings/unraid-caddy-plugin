@@ -7,11 +7,29 @@ $caddyfile = "{$configDir}/Caddyfile";
 $logFile = "/var/log/caddy.log";
 $pidFile = "/var/run/caddy.pid";
 $pluginLogFile = "/var/log/caddy-plugin.log";
+$writeLogrotate = "/usr/local/emhttp/plugins/{$plugin}/scripts/write-logrotate";
 
 function pluginLog($message) {
     global $pluginLogFile;
     $ts = date("Y-m-d H:i:s");
     file_put_contents($pluginLogFile, "[{$ts}] {$message}\n", FILE_APPEND);
+}
+
+// Saved config over the shipped defaults, so keys added in a later release have values.
+function loadCfg() {
+    global $plugin, $configFile;
+    $defaults = parse_ini_file("/usr/local/emhttp/plugins/{$plugin}/default.cfg") ?: [];
+    return array_merge($defaults, parse_ini_file($configFile) ?: []);
+}
+
+function saveCfg($updates) {
+    global $configFile;
+    $cfg = array_merge(parse_ini_file($configFile) ?: [], $updates);
+    $cfgLines = [];
+    foreach ($cfg as $k => $v) {
+        $cfgLines[] = "{$k}=\"{$v}\"";
+    }
+    file_put_contents($configFile, implode("\n", $cfgLines) . "\n");
 }
 
 // CSRF validation — Unraid strips csrf_token from $_POST, so parse raw body
@@ -59,16 +77,50 @@ switch ($action) {
             $log = trim(shell_exec("tail -n 50 " . escapeshellarg($logFile)));
         }
 
-        $cfg = parse_ini_file($configFile) ?: [];
-        $service = $cfg["SERVICE"] ?? "disable";
+        $cfg = loadCfg();
 
         echo json_encode([
             "running" => $running,
             "pid" => $pid,
             "version" => $version,
-            "service" => $service,
+            "service" => $cfg["SERVICE"],
             "log" => $log,
+            "log_size" => $cfg["LOG_SIZE"],
+            "log_rotate" => $cfg["LOG_ROTATE"],
         ]);
+        break;
+
+    case "save_log_settings":
+        if ($_SERVER["REQUEST_METHOD"] !== "POST") {
+            http_response_code(405);
+            echo json_encode(["error" => "POST required"]);
+            exit;
+        }
+
+        parse_str(file_get_contents("php://input"), $rawPost);
+        $size = trim($rawPost["log_size"] ?? "");
+        $rotate = trim($rawPost["log_rotate"] ?? "");
+
+        exec(escapeshellarg($writeLogrotate) . " check " . escapeshellarg($size) . " " . escapeshellarg($rotate) . " 2>&1", $out, $rc);
+        if ($rc !== 0) {
+            http_response_code(400);
+            echo json_encode(["error" => implode(" ", $out)]);
+            exit;
+        }
+
+        $previous = loadCfg();
+        saveCfg(["LOG_SIZE" => $size, "LOG_ROTATE" => $rotate]);
+        exec(escapeshellarg($writeLogrotate) . " 2>&1", $out, $rc);
+        if ($rc !== 0) {
+            saveCfg(["LOG_SIZE" => $previous["LOG_SIZE"], "LOG_ROTATE" => $previous["LOG_ROTATE"]]);
+            pluginLog("save_log_settings: write-logrotate failed: " . implode(" ", $out));
+            http_response_code(500);
+            echo json_encode(["error" => "Failed to write logrotate config", "detail" => implode(" ", $out)]);
+            exit;
+        }
+
+        pluginLog("save_log_settings: size {$size}, rotate {$rotate}");
+        echo json_encode(["success" => true, "log_size" => $size, "log_rotate" => $rotate]);
         break;
 
     case "save_caddyfile":
@@ -269,13 +321,7 @@ switch ($action) {
         }
 
         // Save module list to config now (so it persists even if they don't install immediately)
-        $cfg = parse_ini_file($configFile) ?: [];
-        $cfg["CADDY_MODULES"] = implode("|", $modules);
-        $cfgLines = [];
-        foreach ($cfg as $k => $v) {
-            $cfgLines[] = "{$k}=\"{$v}\"";
-        }
-        file_put_contents($configFile, implode("\n", $cfgLines) . "\n");
+        saveCfg(["CADDY_MODULES" => implode("|", $modules)]);
 
         pluginLog("download_caddy: success — staged {$testVersion} with " . count($modules) . " module(s)");
 
@@ -499,13 +545,7 @@ switch ($action) {
         }
 
         // Clear CADDY_MODULES in config
-        $cfg = parse_ini_file($configFile) ?: [];
-        $cfg["CADDY_MODULES"] = "";
-        $cfgLines = [];
-        foreach ($cfg as $k => $v) {
-            $cfgLines[] = "{$k}=\"{$v}\"";
-        }
-        file_put_contents($configFile, implode("\n", $cfgLines) . "\n");
+        saveCfg(["CADDY_MODULES" => ""]);
 
         // Restart and verify health
         $startOutput = "";

@@ -1,0 +1,74 @@
+#!/bin/bash
+#
+# write-logrotate - write /etc/logrotate.d/caddy-plugin from LOG_SIZE and
+# LOG_ROTATE in caddy-server.cfg (defaults from default.cfg).
+#
+#   write-logrotate                    write the file from the saved config
+#   write-logrotate check SIZE ROTATE  validate values; exit 1 with a message
+#
+# /etc/logrotate.d is in RAM, so doinst.sh runs this on every boot and
+# status.php runs it after the settings are saved.
+
+PLUGIN_NAME="caddy-server"
+PLUGIN_DIR="/usr/local/emhttp/plugins/${PLUGIN_NAME}"
+CONFIG_FILE="/boot/config/plugins/${PLUGIN_NAME}/${PLUGIN_NAME}.cfg"
+TARGET="/etc/logrotate.d/caddy-plugin"
+# Outside logrotate.d, so a logrotate run never reads a half-written file.
+TMP_TARGET="/etc/.caddy-plugin.logrotate.tmp"
+PLUGIN_LOG="/var/log/caddy-plugin.log"
+
+# Prints the reason and returns 1 if the values are not usable by logrotate.
+check() {
+  local size="$1" rotate="$2"
+  if ! [[ "$size" =~ ^[1-9][0-9]{0,5}[kMG]?$ ]]; then
+    echo "Invalid log size '${size}': use a number with an optional k, M or G suffix, e.g. 10M"
+    return 1
+  fi
+  if ! [[ "$rotate" =~ ^([1-9]|1[0-9]|20)$ ]]; then
+    echo "Invalid rotation count '${rotate}': use a whole number from 1 to 20"
+    return 1
+  fi
+}
+
+if [ "$1" = "check" ]; then
+  check "$2" "$3"
+  exit $?
+fi
+
+source "${PLUGIN_DIR}/default.cfg"
+DEFAULT_SIZE="$LOG_SIZE" DEFAULT_ROTATE="$LOG_ROTATE"
+[ -f "$CONFIG_FILE" ] && source "$CONFIG_FILE"
+
+# A bad hand edit is reset in the cfg too, so the settings page shows what runs.
+if ! reason=$(check "$LOG_SIZE" "$LOG_ROTATE"); then
+  echo "[$(date '+%F %T')] write-logrotate: ${reason}; resetting to ${DEFAULT_SIZE}/${DEFAULT_ROTATE}" >> "$PLUGIN_LOG"
+  LOG_SIZE="$DEFAULT_SIZE" LOG_ROTATE="$DEFAULT_ROTATE"
+  sed -i '/^LOG_SIZE=/d; /^LOG_ROTATE=/d' "$CONFIG_FILE"
+  printf 'LOG_SIZE="%s"\nLOG_ROTATE="%s"\n' "$LOG_SIZE" "$LOG_ROTATE" >> "$CONFIG_FILE"
+fi
+
+mkdir -p "$(dirname "$TARGET")"
+cat > "$TMP_TARGET" <<EOF
+/var/log/caddy-plugin.log {
+    size 256k
+    rotate 2
+    compress
+    missingok
+    notifempty
+    copytruncate
+}
+
+# rc.caddy and rc.coredns redirect stdout/stderr with >>, so the process keeps
+# the file open; copytruncate is required, and O_APPEND keeps writes at offset 0
+# after the truncate.
+/var/log/caddy.log /var/log/coredns.log {
+    size ${LOG_SIZE}
+    rotate ${LOG_ROTATE}
+    compress
+    missingok
+    notifempty
+    copytruncate
+}
+EOF
+mv "$TMP_TARGET" "$TARGET" || exit 1
+echo "[$(date '+%F %T')] write-logrotate: wrote ${TARGET} (size ${LOG_SIZE}, rotate ${LOG_ROTATE})" >> "$PLUGIN_LOG"

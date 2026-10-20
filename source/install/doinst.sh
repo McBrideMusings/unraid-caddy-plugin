@@ -8,6 +8,7 @@ chmod 755 /etc/rc.d/rc.caddy
 chmod 755 /etc/rc.d/rc.coredns 2>/dev/null
 chmod 755 /usr/local/emhttp/plugins/${PLUGIN_NAME}/event/driver_loaded
 chmod 755 /usr/local/emhttp/plugins/${PLUGIN_NAME}/scripts/caddy-watchdog 2>/dev/null
+chmod 755 /usr/local/emhttp/plugins/${PLUGIN_NAME}/scripts/write-logrotate
 
 # Create persistent config directory
 mkdir -p "$CONFIG_DIR"
@@ -17,6 +18,9 @@ mkdir -p "${CONFIG_DIR}/override"
 if [ ! -f "${CONFIG_DIR}/${PLUGIN_NAME}.cfg" ]; then
   cp /usr/local/emhttp/plugins/${PLUGIN_NAME}/default.cfg "${CONFIG_DIR}/${PLUGIN_NAME}.cfg"
 fi
+
+# /etc/logrotate.d is in RAM; rebuild the rules from the saved log settings
+/usr/local/emhttp/plugins/${PLUGIN_NAME}/scripts/write-logrotate
 
 # Create default Caddyfile if missing
 if [ ! -f "${CONFIG_DIR}/Caddyfile" ]; then

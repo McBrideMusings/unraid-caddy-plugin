@@ -8,8 +8,9 @@ $configDir = "/boot/config/plugins/{$plugin}";
 $configFile = "{$configDir}/{$plugin}.cfg";
 $caddyfile = "{$configDir}/Caddyfile";
 
-$cfg = parse_ini_file($configFile) ?: [];
-$service = $cfg["SERVICE"] ?? "disable";
+$defaults = parse_ini_file("/usr/local/emhttp/plugins/{$plugin}/default.cfg") ?: [];
+$cfg = array_merge($defaults, parse_ini_file($configFile) ?: []);
+$service = $cfg["SERVICE"];
 
 $running = false;
 $pidFile = "/var/run/caddy.pid";
@@ -222,6 +223,18 @@ ts.example.com {
   <pre id="caddy-log">Loading...</pre>
 </div>
 
+<div style="margin-top: 20px;">
+  <strong>Log Rotation</strong>
+  <p style="color: #888; font-size: 12px; margin: 4px 0 10px;">
+    Applies to <code>/var/log/caddy.log</code> and <code>/var/log/coredns.log</code>. Unraid keeps <code>/var/log</code> in a 128 MB RAM disk, so each log uses up to its size plus the compressed copies.
+  </p>
+  <label>Rotate at <input type="text" id="log-size" size="6" value="<?= htmlspecialchars($cfg["LOG_SIZE"]) ?>"></label>
+  <span style="color: #888; font-size: 12px; margin-right: 12px;">e.g. 10M, 512k</span>
+  <label>Keep <input type="number" id="log-rotate" min="1" max="20" style="width: 4em;" value="<?= htmlspecialchars($cfg["LOG_ROTATE"]) ?>"> copies</label>
+  <button class="caddy-btn" onclick="saveLogSettings()" style="margin-left: 12px;">Save</button>
+  <span id="log-settings-status"></span>
+</div>
+
 <script>
 var csrfToken = csrf_token;
 var statusUrl = "/plugins/caddy-server/php/status.php";
@@ -277,6 +290,29 @@ function saveCaddyfile(reload) {
     }
   };
   xhr.send("csrf_token=" + encodeURIComponent(csrfToken) + "&content=" + encodeURIComponent(content));
+}
+
+function saveLogSettings() {
+  var statusEl = document.getElementById("log-settings-status");
+  statusEl.textContent = "Saving...";
+
+  var xhr = new XMLHttpRequest();
+  xhr.open("POST", statusUrl + "?action=save_log_settings", true);
+  xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+  xhr.onreadystatechange = function() {
+    if (xhr.readyState === 4) {
+      try {
+        var data = JSON.parse(xhr.responseText);
+        statusEl.textContent = data.success ? "Saved." : "Error: " + (data.error || "Unknown error");
+      } catch(e) {
+        statusEl.textContent = "Error saving.";
+      }
+      setTimeout(function() { statusEl.textContent = ""; }, 5000);
+    }
+  };
+  xhr.send("csrf_token=" + encodeURIComponent(csrfToken) +
+           "&log_size=" + encodeURIComponent(document.getElementById("log-size").value) +
+           "&log_rotate=" + encodeURIComponent(document.getElementById("log-rotate").value));
 }
 
 fetchStatus();

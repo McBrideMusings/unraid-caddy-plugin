@@ -1,8 +1,0 @@
-/var/log/caddy-plugin.log {
-    size 256k
-    rotate 2
-    compress
-    missingok
-    notifempty
-    copytruncate
-}
